@@ -1,0 +1,124 @@
+{{- if .Values.postInstall.enabled -}}
+{{- range $i := until (.Values.replicaCount | int) }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: "{{ include "iap.fullname" $ }}-post-install-{{ $i }}"
+  labels:
+    {{- include "iap.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: post-install-{{ $i }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "1"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  template:
+    metadata:
+      name: "{{ include "iap.fullname" $ }}-post-install-{{ $i }}"
+      labels:
+        {{- include "iap.selectorLabels" $ | nindent 8 }}
+        app.kubernetes.io/component: post-install-{{ $i }}
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      containers:
+      - name: post-install
+        image: curlimages/curl:latest
+        command:
+        - /bin/sh
+        - -c
+        - |
+          echo "=== IAP Post-Install Setup Started ==="
+          echo "Timestamp: $(date)"
+
+          echo "Discovering IAP service..."
+
+          # Dynamically get the service details
+          IAP_SERVICE="{{ include "iap.fullname" $ }}-service"
+          IAP_NAMESPACE="{{ $.Release.Namespace }}"
+          SERVICE_PORT="{{ $.Values.service.port | default 443 }}"
+
+          echo "Target service: $IAP_SERVICE.$IAP_NAMESPACE.svc.cluster.local:$SERVICE_PORT"
+
+          # Wait for service to exist and be ready
+          echo "Waiting for service $IAP_SERVICE to be available..."
+
+          for i in $(seq 1 60); do  # 10 minutes
+          if nslookup "$IAP_SERVICE.$IAP_NAMESPACE.svc.cluster.local" > /dev/null 2>&1; then
+              echo "Service DNS resolution successful"
+              break
+          fi
+          echo "Waiting for service DNS... (attempt $i/60)"
+          sleep 10
+          done
+
+          # Set the service URL
+          SERVICE_URL="https://$IAP_SERVICE:$SERVICE_PORT"
+          HEALTH_URL="$SERVICE_URL/health/status"
+
+          echo "Checking service health at: $HEALTH_URL"
+
+          for i in $(seq 1 120); do  # 20 minutes
+          if curl -k -s --connect-timeout 5 --max-time 10 "$HEALTH_URL" > /dev/null 2>&1; then
+              echo "IAP service is ready!"
+              break
+          fi
+          echo "Waiting for IAP service health... (attempt $i/120)"
+          sleep 10
+
+          if [ $i -eq 120 ]; then
+              echo "TIMEOUT: IAP service not ready after 20 minutes"
+              echo "Trying to get more info..."
+              curl -k -v "$HEALTH_URL" || true
+              exit 1
+          fi
+          done
+          sleep 120
+
+          echo "Attempting login to $SERVICE_URL/login..."
+          echo "Login command: curl -k --location $SERVICE_URL/login --header 'Content-Type: application/json' --data '{\"username\": \"admin\", \"password\": \"admin\"}'"
+          
+          TOKEN=$(curl -k --location "$SERVICE_URL/login" \
+          --header 'Content-Type: application/json' \
+          --data '{
+              "username": "admin",
+              "password": "admin"
+              }' 2>/dev/null)
+          
+          echo "Raw login response: $TOKEN"
+          
+          # Use external ingress URL for AG manager (not internal service)
+          EXTERNAL_URL="https://{{ $.Values.ingress.loadBalancer.host }}"
+          AG_URL="$EXTERNAL_URL/ag-manager/actions?token=$TOKEN"
+          echo "AG manager URL (external): $AG_URL"
+          echo "URL length: ${#AG_URL}"
+  
+          echo "Rediscovering AG manager tasks"
+          echo "AG command: curl -k --location --request DELETE '$AG_URL' --header 'Content-Type: application/json' --data '{\"taskContinuation\": true}'"
+          
+          AG_RESPONSE=$(curl -k --location --request DELETE \
+            "$AG_URL" \
+            --header 'Content-Type: application/json' \
+            --data '{
+              "taskContinuation": true
+            }' 2>&1)
+          
+          echo "AG manager response: $AG_RESPONSE"
+
+          echo "=== Post-Install Setup Completed Successfully ==="
+          echo "Timestamp: $(date)"
+        env:
+        {{- if $.Values.postInstall.env }}
+        {{- with $.Values.postInstall.env }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- end }}
+        {{- if $.Values.postInstallEnv }}
+        {{- with $.Values.postInstallEnv }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- end }}
+  backoffLimit: {{ $.Values.postInstall.backoffLimit | default 3 }}
+{{- end }}
+{{- end -}}
