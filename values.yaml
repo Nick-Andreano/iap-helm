@@ -277,6 +277,7 @@ env:
   # ITENTIAL_PLATFORM_ENCRYPTED: "true"
 
   # 64-length hex string describing a 256 bit encryption key.
+  # Itential recommends that this value come from a Secret named "itential-platform-secrets".
   # ITENTIAL_ENCRYPTION_KEY: ""
 
   # A whitelist of services (applications/adapters) to initialize on startup of the platform.
@@ -329,6 +330,7 @@ env:
   ITENTIAL_MONGO_USER: "itential"
 
   # The password to use when connecting to MongoDB.
+  # Itential recommends that this value come from a Secret named "itential-platform-secrets".
   # ITENTIAL_MONGO_PASSWORD: ""
 
   # The name of the database that the MongoDB user must authenticate against.
@@ -342,6 +344,7 @@ env:
 
   # The MongoDB connection string. For a replica set this will include all members of the
   # replica set. For Mongo Atlas this will be the SRV connection format.
+  # Itential recommends that this value come from a Secret named "itential-platform-secrets".
   # ITENTIAL_MONGO_URL: ""
 
   # -- Instruct the MongoDB driver to use TLS protocols when connecting to the database.
@@ -369,6 +372,7 @@ env:
   ITENTIAL_REDIS_USERNAME: "itential"
 
   # The password to use when connecting to Redis.
+  # Itential recommends that this value come from a Secret named "itential-platform-secrets".
   # ITENTIAL_REDIS_PASSWORD: ""
 
   # The maximum number of times to retry a request to Redis when the connection is lost.
@@ -387,6 +391,7 @@ env:
   #ITENTIAL_REDIS_SENTINEL_USERNAME: "itential"
 
   # The password to use when authenticating with a Redis Sentinel cluster
+  # Itential recommends that this value come from a Secret named "itential-platform-secrets".
   #ITENTIAL_REDIS_SENTINEL_PASSWORD: ""
 
   # The list of Redis Sentinel servers (hostnames and ports) to use for high availability.
@@ -416,6 +421,7 @@ env:
   # ITENTIAL_VAULT_ROLE_ID: ""
 
   # Hashicorp Vault Secret ID used for AppRole login.
+  # Itential recommends that this value come from a Secret named "itential-platform-secrets".
   # ITENTIAL_VAULT_SECRET_ID: ""
 
   # The path where the AppRole was enabled.
@@ -522,6 +528,7 @@ env:
   # ITENTIAL_WEBSERVER_HTTPS_KEY: "/etc/ssl/certs/platform/server.key"
 
   # The passphrase for the private key used to enable TLS sessions.
+  # Itential recommends that this value come from a Secret named "itential-platform-secrets".
   # ITENTIAL_WEBSERVER_HTTPS_PASSPHRASE: ""
 
   # The path to the certificate file used for HTTPS connections.
