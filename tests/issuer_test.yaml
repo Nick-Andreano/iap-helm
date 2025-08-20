@@ -182,3 +182,30 @@ tests:
           path: spec.ca.secretName
       - isNotNull:
           path: spec.ca.secretName
+
+  - it: should render expected common annotations
+    set:
+      issuer:
+        enabled: true
+        name: "structure-test"
+        caSecretName: "structure-ca"
+    asserts:
+      - exists:
+          path: metadata.annotations["itential.com/copyright"]
+      - exists:
+          path: metadata.annotations["itential.com/license"]
+      - exists:
+          path: metadata.annotations["helm.sh/template-file"]
+
+  - it: should render custom annotations
+    set:
+      issuer:
+        enabled: true
+        name: "structure-test"
+        caSecretName: "structure-ca"
+        annotations:
+          foo: bar
+    asserts:
+      - equal:
+          path: metadata.annotations["foo"]
+          value: bar

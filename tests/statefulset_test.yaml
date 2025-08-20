@@ -404,15 +404,7 @@ tests:
           path: spec.template.spec.containers[0].volumeMounts
           content:
             name: platform-cert-volume
-            mountPath: /etc/ssl/certs/platform/server.crt
-            subPath: tls.crt
-            readOnly: true
-      - contains:
-          path: spec.template.spec.containers[0].volumeMounts
-          content:
-            name: platform-cert-volume
-            mountPath: /etc/ssl/certs/platform/server.key
-            subPath: tls.key
+            mountPath: /etc/ssl/platform
             readOnly: true
 
   - it: should configure resources when provided
@@ -659,3 +651,62 @@ tests:
           path: spec.template.spec.containers[0].livenessProbe
       - isNull:
           path: spec.template.spec.containers[0].readinessProbe
+
+  - it: should render expected common annotations
+    set:
+      statefulset.enabled: true
+      replicaCount: 1
+      image:
+        repository: "test/app"
+        tag: "v1.0.0"
+        pullPolicy: "IfNotPresent"
+      service:
+        port: 80
+      applicationPort: 8080
+      useTLS: false
+      podSecurityContext: {}
+      securityContext: {}
+      persistentVolumeClaims:
+        enabled: false
+      startupProbe:
+        enabled: false
+      livenessProbe:
+        enabled: false
+      readinessProbe:
+        enabled: false
+    asserts:
+      - exists:
+          path: metadata.annotations["itential.com/copyright"]
+      - exists:
+          path: metadata.annotations["itential.com/license"]
+      - exists:
+          path: metadata.annotations["helm.sh/template-file"]
+
+  - it: should render custom annotations
+    set:
+      statefulset.enabled: true
+      replicaCount: 1
+      image:
+        repository: "test/app"
+        tag: "v1.0.0"
+        pullPolicy: "IfNotPresent"
+      service:
+        port: 80
+      applicationPort: 8080
+      useTLS: false
+      podSecurityContext: {}
+      securityContext: {}
+      persistentVolumeClaims:
+        enabled: false
+      startupProbe:
+        enabled: false
+      livenessProbe:
+        enabled: false
+      readinessProbe:
+        enabled: false
+      podAnnotations:
+        foo: bar
+    asserts:
+      - equal:
+          path: spec.template.metadata.annotations["foo"]
+          value: bar

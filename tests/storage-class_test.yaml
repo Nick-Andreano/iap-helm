@@ -178,3 +178,36 @@ tests:
       - equal:
           path: volumeBindingMode
           value: "Immediate"
+
+  - it: should render expected common annotations
+    set:
+      storageClass:
+        enabled: true
+        name: "immediate-storage"
+        provisioner: "kubernetes.io/aws-ebs"
+        reclaimPolicy: "Delete"
+        volumeBindingMode: "Immediate"
+        parameters: {}
+    asserts:
+      - exists:
+          path: metadata.annotations["itential.com/copyright"]
+      - exists:
+          path: metadata.annotations["itential.com/license"]
+      - exists:
+          path: metadata.annotations["helm.sh/template-file"]
+
+  - it: should render custom annotations
+    set:
+      storageClass:
+        enabled: true
+        name: "immediate-storage"
+        provisioner: "kubernetes.io/aws-ebs"
+        reclaimPolicy: "Delete"
+        volumeBindingMode: "Immediate"
+        parameters: {}
+        annotations:
+          foo: bar
+    asserts:
+      - equal:
+          path: metadata.annotations["foo"]
+          value: bar

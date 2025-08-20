@@ -1,8 +1,4 @@
 {{- if .Values.storageClass.enabled -}}
-{{/*
-Copyright (c) 2024, Itential, Inc
-GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
-*/}}
 ---
 apiVersion: storage.k8s.io/v1
 kind: StorageClass
@@ -12,8 +8,11 @@ metadata:
     {{- include "iap.labels" . | nindent 4 }}
     app.kubernetes.io/component: "storageclass"
   annotations:
-    helm.sh/template-file: "{{ .Template.Name }}"
     kubernetes.io/description: "Itential Automation Platform StorageClass used for persistent volumes."
+    {{- include "iap.annotations" . | nindent 4 }}
+    {{- with .Values.storageClass.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
 provisioner: {{ .Values.storageClass.provisioner }}
 parameters:
   {{- toYaml .Values.storageClass.parameters | nindent 2 }}

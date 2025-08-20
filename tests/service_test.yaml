@@ -342,3 +342,32 @@ tests:
           path: spec.selector
           content:
             app.kubernetes.io/instance: "my-custom-release"
+
+  - it: should render expected common annotations
+    set:
+      service:
+        name: "release-test-service"
+        type: "ClusterIP"
+        port: 80
+      applicationPort: 8080
+    asserts:
+      - exists:
+          path: metadata.annotations["itential.com/copyright"]
+      - exists:
+          path: metadata.annotations["itential.com/license"]
+      - exists:
+          path: metadata.annotations["helm.sh/template-file"]
+
+  - it: should render custom annotations
+    set:
+      service:
+        name: "release-test-service"
+        type: "ClusterIP"
+        port: 80
+        annotations:
+          foo: bar
+      applicationPort: 8080
+    asserts:
+      - equal:
+          path: metadata.annotations["foo"]
+          value: bar

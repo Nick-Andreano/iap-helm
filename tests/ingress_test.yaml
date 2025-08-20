@@ -897,3 +897,38 @@ tests:
       - equal:
           path: spec.rules[1].http.paths[0].backend.service.port.number
           value: 8443
+
+  - it: should render expected common annotations
+    set:
+      ingress:
+        enabled: true
+        loadBalancer:
+          enabled: true
+          host: test.example.com
+        directAccess:
+          enabled: true
+          baseDomain: example.com
+    asserts:
+      - exists:
+          path: metadata.annotations["itential.com/copyright"]
+      - exists:
+          path: metadata.annotations["itential.com/license"]
+      - exists:
+          path: metadata.annotations["helm.sh/template-file"]
+
+  - it: should render custom annotations
+    set:
+      ingress:
+        enabled: true
+        loadBalancer:
+          enabled: true
+          host: test.example.com
+        directAccess:
+          enabled: true
+          baseDomain: example.com
+        annotations:
+          foo: bar
+    asserts:
+      - equal:
+          path: metadata.annotations["foo"]
+          value: bar

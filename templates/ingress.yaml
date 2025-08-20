@@ -1,8 +1,4 @@
 {{- if .Values.ingress.enabled -}}
-{{/*
-Copyright (c) 2024, Itential, Inc
-GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
-*/}}
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -11,12 +7,12 @@ metadata:
   labels:
     {{- include "iap.labels" . | nindent 4 }}
     app.kubernetes.io/component: "ingress"
-  {{- with .Values.ingress.annotations }}
   annotations:
-    helm.sh/template-file: "{{ $.Template.Name }}"
-    kubernetes.io/description: "Itential Automation Platform Ingress. Contains load balanced access and individual access"
+    kubernetes.io/description: "Itential Automation Platform Ingress. Contains load balanced access and individual access."
+    {{- include "iap.annotations" . | nindent 4 }}
+    {{- with .Values.ingress.annotations }}
     {{- toYaml . | nindent 4 }}
-  {{- end }}
+    {{- end }}
 spec:
   {{- if .Values.ingress.className }}
   ingressClassName: {{ .Values.ingress.className }}

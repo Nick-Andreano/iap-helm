@@ -1,8 +1,4 @@
 {{- if .Values.certificate.enabled -}}
-{{/*
-Copyright (c) 2025, Itential, Inc
-GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
-*/}}
 ---
 apiVersion: cert-manager.io/v1
 kind: Certificate
@@ -12,8 +8,11 @@ metadata:
     {{- include "iap.labels" . | nindent 4 }}
     app.kubernetes.io/component: "certificate"
   annotations:
-    helm.sh/template-file: "{{ .Template.Name }}"
-    kubernetes.io/description: "Itential Automation Platform TLS certificates"
+    kubernetes.io/description: "Itential Automation Platform TLS certificates."
+    {{- include "iap.annotations" . | nindent 4 }}
+    {{- with .Values.certificate.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
 spec:
   secretName: {{ include "iap.fullname" . }}-tls-secret
   issuerRef:

@@ -1,8 +1,4 @@
 {{- if .Values.statefulset.enabled -}}
-{{/*
-Copyright (c) 2024, Itential, Inc
-GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
-*/}}
 ---
 apiVersion: apps/v1
 kind: StatefulSet
@@ -12,8 +8,8 @@ metadata:
     {{- include "iap.labels" . | nindent 4 }}
     app.kubernetes.io/component: "statefulset"
   annotations:
-    helm.sh/template-file: "{{ .Template.Name }}"
     kubernetes.io/description: "Itential Automation Platform StatefulSet executes IAP container."
+    {{- include "iap.annotations" . | nindent 4 }}
 spec:
   serviceName: "{{ .Values.service.name }}-headless"
   selector:
@@ -126,16 +122,7 @@ spec:
         volumeMounts:
           {{- if .Values.useTLS }}
           - name: platform-cert-volume
-            mountPath: /etc/ssl/certs/platform/server.crt
-            subPath: tls.crt
-            readOnly: true
-          - name: platform-cert-volume
-            mountPath: /etc/ssl/certs/platform/server.key
-            subPath: tls.key
-            readOnly: true
-          - name: platform-cert-volume
-            mountPath: /etc/ssl/certs/platform/ca-bundle.crt
-            subPath: ca.crt
+            mountPath: /etc/ssl/platform
             readOnly: true
           {{- end }}
           {{- if .Values.mountLogVolume }}

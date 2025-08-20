@@ -229,3 +229,36 @@ tests:
       - contains:
           path: spec.dnsNames
           content: "special-chars.example.com"
+
+  - it: should render expected common annotations
+    set:
+      certificate.enabled: true
+      certificate.issuerRef.name: "test-issuer"
+      certificate.issuerRef.kind: "ClusterIssuer"
+      certificate.commonName: "special-chars.example.com"
+      certificate.domain: "example.com"
+      certificate.renewBefore: "720h"
+      certificate.duration: "2160h"
+    asserts:
+      - exists:
+          path: metadata.annotations["itential.com/copyright"]
+      - exists:
+          path: metadata.annotations["itential.com/license"]
+      - exists:
+          path: metadata.annotations["helm.sh/template-file"]
+
+  - it: should render custom annotations
+    set:
+      certificate.enabled: true
+      certificate.issuerRef.name: "test-issuer"
+      certificate.issuerRef.kind: "ClusterIssuer"
+      certificate.commonName: "special-chars.example.com"
+      certificate.domain: "example.com"
+      certificate.renewBefore: "720h"
+      certificate.duration: "2160h"
+      certificate.annotations:
+        foo: bar
+    asserts:
+      - equal:
+          path: metadata.annotations["foo"]
+          value: bar

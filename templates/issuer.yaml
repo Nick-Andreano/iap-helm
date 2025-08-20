@@ -5,10 +5,6 @@
 {{- if not .Values.issuer.caSecretName -}}
 {{- fail "issuer.caSecretName is required when issuer is enabled" -}}
 {{- end -}}
-{{/*
-Copyright (c) 2025, Itential, Inc
-GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
-*/}}
 ---
 apiVersion: cert-manager.io/v1
 kind: {{ .Values.issuer.kind | default "Issuer" }}
@@ -18,8 +14,11 @@ metadata:
     {{- include "iap.labels" . | nindent 4 }}
     app.kubernetes.io/component: "issuer"
   annotations:
-    helm.sh/template-file: "{{ .Template.Name }}"
-    kubernetes.io/description: "Itential Automation Platform cert-manager issuer"
+    kubernetes.io/description: "Itential Automation Platform cert-manager issuer."
+    {{- include "iap.annotations" . | nindent 4 }}
+    {{- with .Values.issuer.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
 spec:
   ca:
     secretName: {{ .Values.issuer.caSecretName | quote }}
