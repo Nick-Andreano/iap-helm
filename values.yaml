@@ -185,7 +185,8 @@ podLabels: {}
 # allow for that to happen.
 podSecurityContext:
   fsGroup: 1001
-  runAsUser: 100 # run as the 'itential' user
+  runAsGroup: 1001
+  runAsUser: 1001
   runAsNonRoot: true
 # -- Additional security context
 securityContext: {}
