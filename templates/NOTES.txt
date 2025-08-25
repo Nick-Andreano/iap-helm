@@ -1,0 +1,32 @@
+{{- $protocol := "http" -}}
+{{- if .Values.useTLS -}}
+  {{- $protocol = "https" -}}
+{{- end -}}
+Thank you for installing Itential Automation Platform!
+
+The application will be available at:
+
+{{- if .Values.ingress.enabled }}
+  {{ $protocol }}://{{ .Values.ingress.loadBalancer.host }}
+
+You can access each individual pod at these addresses:
+  {{- range $i := until (.Values.replicaCount | int) }}
+  {{ printf "%s://%s-%s-%d.%s" $protocol (include "iap.name" $) $.Release.Namespace $i $.Values.certificate.domain }}
+  {{- end }}
+{{- end }}
+
+Accessing individual pods is a requirement for certain actions like restarting adapters
+and pausing job and task workers.
+
+It can take several minutes for the application to become available.
+
+The default user is "admin".
+
+The following environment variables are configured to override the defaults:
+
+{{- range $key, $value := .Values.env }}
+  {{ $key }}: {{ $value | quote }}
+{{- end }}
+
+For more information consult the Itential documentation:
+https://docs.itential.com/docs/about-itential-platform-6-feature-release

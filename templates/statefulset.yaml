@@ -1,4 +1,10 @@
 {{- if .Values.statefulset.enabled -}}
+{{- $httpEnabled := "true" -}}
+{{- $httpsEnabled := "false" -}}
+{{- if .Values.useTLS -}}
+  {{- $httpEnabled = "false" -}}
+  {{- $httpsEnabled = "true" -}}
+{{- end -}}
 ---
 apiVersion: apps/v1
 kind: StatefulSet
@@ -89,25 +95,6 @@ spec:
           {{- toYaml .Values.resources | nindent 12 }}
         {{- end }}
         env:
-          {{- if .Values.useTLS }}
-          - name: ITENTIAL_WEBSERVER_HTTPS_ENABLED
-            value: "true"
-          - name: ITENTIAL_WEBSERVER_HTTP_ENABLED
-            value: "false"
-          - name: ITENTIAL_WEBSERVER_HTTPS_PORT
-            value: {{ .Values.applicationPort | quote }}
-          {{- else }}
-          - name: ITENTIAL_WEBSERVER_HTTPS_ENABLED
-            value: "false"
-          - name: ITENTIAL_WEBSERVER_HTTP_ENABLED
-            value: "true"
-          - name: ITENTIAL_WEBSERVER_HTTP_PORT
-            value: {{ .Values.applicationPort | quote }}
-          {{- end }}
-          {{- range $key, $value := .Values.env }}
-          - name: {{ $key }}
-            value: {{ $value | quote }}
-          {{- end }}
           - name: POD_NAME
             valueFrom:
               fieldRef:
@@ -116,6 +103,24 @@ spec:
             value: "$(POD_NAME)-{{ .Release.Namespace }}"
           - name: ITENTIAL_VAULT_READ_ONLY
             value: "true"
+          - name: ITENTIAL_SERVICE_DIRECTORY
+            value: "/opt/itential/platform/services/custom"
+          - name: ITENTIAL_WEBSERVER_HTTPS_ENABLED
+            value: {{ $httpsEnabled | quote }}
+          - name: ITENTIAL_WEBSERVER_HTTP_ENABLED
+            value: {{ $httpEnabled | quote }}
+          - name: ITENTIAL_WEBSERVER_HTTPS_PORT
+            value: {{ .Values.applicationPort | quote }}
+          {{- if .Values.useTLS }}
+          - name: ITENTIAL_WEBSERVER_HTTPS_CERT
+            value: "/etc/ssl/platform/tls.crt"
+          - name: ITENTIAL_WEBSERVER_HTTPS_KEY
+            value: "/etc/ssl/platform/tls.key"
+          {{- end }}
+          {{- range $key, $value := .Values.env }}
+          - name: {{ $key }}
+            value: {{ $value | quote }}
+          {{- end }}
         envFrom:
         - secretRef:
             name: itential-platform-secrets

@@ -90,7 +90,7 @@ storageClass:
   # -- Toggle the use of storageClass
   enabled: true
   # -- The name of the storageClass
-  name: "iap-ebs-gp3"
+  name: ""
   # -- Specifies which volume plugin provisions the storage
   provisioner: ""
   # -- What happens to PersistentVolumes when released. Itential recommends "retain".
@@ -109,7 +109,7 @@ persistentVolumeClaims:
   # that may have been developed by the customer.
   assetClaim:
     # -- The requested amount of storage
-    storage: "10Gi"
+    storage: "20Gi"
   # -- This represents the claim for the persistence for the log files created and written to by the
   # IAP application.
   logClaim:
@@ -233,7 +233,7 @@ startupProbe:
   timeoutSeconds: 5
   failureThreshold: 18
   successThreshold: 1
-  path: "/health/status"
+  path: "/health/status?exclude-services=true"
 
 # -- Additional volumes to output on the Statefulset definition.
 volumes: []
