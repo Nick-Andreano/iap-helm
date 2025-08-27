@@ -1,0 +1,10 @@
+owner: Itential
+git-repo: iap-helm
+charts-dir: charts
+target-branch: main
+pages-branch: gh-pages
+package-path: .cr-release-packages
+index-path: index.yaml
+skip-existing: true
+generate-release-notes: true
+make-release-latest: true

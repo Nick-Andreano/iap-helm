@@ -1,0 +1,70 @@
+{{- if .Values.tests.enabled }}
+{{- $protocol := "http" -}}
+{{- if .Values.useTLS -}}
+  {{- $protocol = "https" -}}
+{{- end -}}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ include "iap.fullname" . }}-test-readiness"
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-weight": "2"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  restartPolicy: Never
+  containers:
+  - name: readiness-test
+    image: curlimages/curl:latest
+    command:
+    - /bin/sh
+    - -c
+    - |
+      echo "Waiting for StatefulSet to be ready..."
+
+      # Configuration
+      max_wait={{ .Values.tests.readinessTimeout | default 600 }}
+      wait_time=0
+      replica_count={{ .Values.replicaCount | default 1 }}
+      protocol="{{ $protocol }}"
+
+      echo "Configuration:"
+      echo "  Max wait: ${max_wait}s"
+      echo "  Replica count: ${replica_count}"
+      echo "  Protocol: ${protocol}"
+
+      while [ $wait_time -lt $max_wait ]; do
+        ready_count=0
+
+        echo "=== Check round $(($wait_time / 10 + 1)) ==="
+
+        # Check each replica
+        for i in $(seq 0 $((replica_count - 1))); do
+
+          pod_url="${protocol}://{{ include "iap.name" . }}-{{ .Release.Namespace }}-${i}.{{ .Values.certificate.domain }}/health/status"
+
+          echo "Testing pod ${i}: ${pod_url}"
+
+          if curl -f -s --connect-timeout 5 --max-time 10 "${pod_url}"; then
+            ready_count=$((ready_count + 1))
+            echo "✅ Replica ${i} is ready"
+          else
+            echo "⏳ Replica ${i} is not ready yet"
+          fi
+        done
+
+        if [ $ready_count -eq $replica_count ]; then
+          echo "🎉 All replicas are ready! (${ready_count}/${replica_count})"
+          exit 0
+        fi
+
+        echo "📊 Status: ($ready_count/$replica_count ready) - ${wait_time}s elapsed"
+        sleep 10
+        wait_time=$((wait_time + 10))  # This was missing!
+      done
+
+      echo "❌ Timeout waiting for StatefulSet to be ready after ${max_wait}s"
+      echo "📊 Final status: ($ready_count/$replica_count ready)"
+      exit 1
+
+{{- end }}

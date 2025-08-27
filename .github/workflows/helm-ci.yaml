@@ -25,7 +25,7 @@ jobs:
         run: helm plugin install https://github.com/helm-unittest/helm-unittest
 
       - name: Lint Helm chart
-        run: helm lint .
+        run: helm lint charts/iap
 
       - name: Run Helm unit tests
-        run: helm unittest --strict .
+        run: helm unittest --strict charts/iap

@@ -1,0 +1,209 @@
+{{- if .Values.tests.enabled }}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ include "iap.fullname" . }}-test-connection
+  labels:
+    {{- include "iap.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-weight": "1"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  restartPolicy: Never
+  containers:
+  - name: connection-test
+    image: curlimages/curl:latest  # Changed to curl image for better tools
+    command:
+    - /bin/sh
+    - -c
+    - |
+      echo "🚀 Starting enhanced connection test to {{ .Values.ingress.loadBalancer.host }}:{{ .Values.service.port | default 3443 }}"
+      echo "⏰ Starting at: $(date)"
+
+      # Configuration
+      target_host="{{ .Values.ingress.loadBalancer.host }}"
+      target_port="{{ .Values.service.port | default 3443 }}"
+      max_wait_time={{ .Values.tests.connectionTimeout | default 300 }}  # Increased default
+      dns_retry_interval=10
+      connection_retry_interval=3  # Faster retries
+      stability_tests=5  # More stability tests
+      success_threshold=3  # Need 3/5 to pass
+
+      echo "📋 Test configuration:"
+      echo "  Target host: ${target_host}"
+      echo "  Target port: ${target_port}"
+      echo "  Max wait time: ${max_wait_time}s"
+      echo "  Connection retry interval: ${connection_retry_interval}s"
+      echo "  Stability tests: ${stability_tests}"
+      echo "  Success threshold: ${success_threshold}/${stability_tests}"
+      echo ""
+
+      # Step 1: DNS Resolution (quick since it worked before)
+      echo "🔍 Phase 1: DNS Resolution Test"
+      if nslookup "${target_host}" > /dev/null 2>&1; then
+        resolved_ip=$(nslookup "${target_host}" | grep -A1 "Name:" | grep "Address:" | awk '{print $2}' | head -1)
+        echo "✅ DNS resolution successful!"
+        echo "🌐 Resolved IP: ${resolved_ip:-"could not extract IP"}"
+      else
+        echo "❌ DNS resolution failed"
+        exit 1
+      fi
+
+      # Step 2: Enhanced connectivity test with better diagnostics
+      echo ""
+      echo "🔌 Phase 2: Enhanced Connectivity Test"
+      connection_wait_time=0
+      connection_successful=false
+      success_count=0
+      attempt=0
+
+      while [ $connection_wait_time -lt $max_wait_time ] && [ "$connection_successful" = "false" ]; do
+        attempt=$((attempt + 1))
+        echo "🔌 Testing connection (attempt ${attempt}) at $(date)..."
+
+        # Test with multiple methods for better diagnostics
+        nc_result=false
+        curl_result=false
+
+        # Method 1: netcat test
+        if timeout 10 nc -z "${target_host}" "${target_port}" > /dev/null 2>&1; then
+          nc_result=true
+          echo "  ✅ netcat: TCP connection successful"
+        else
+          echo "  ❌ netcat: TCP connection failed"
+        fi
+
+        # Method 2: curl test (for HTTPS/HTTP services)
+        if timeout 15 curl -k -s --connect-timeout 10 --max-time 15 \
+           "https://${target_host}:${target_port}" > /dev/null 2>&1; then
+          curl_result=true
+          echo "  ✅ curl: HTTPS connection successful"
+        else
+          echo "  ❌ curl: HTTPS connection failed"
+        fi
+
+        # Consider it successful if either method works
+        if [ "$nc_result" = "true" ] || [ "$curl_result" = "true" ]; then
+          success_count=$((success_count + 1))
+          echo "  🎯 Connection attempt ${attempt} successful (success count: ${success_count})"
+
+          # Require 2 consecutive successes to consider it stable
+          if [ $success_count -ge 2 ]; then
+            connection_successful=true
+            echo "  🎉 Connection established after ${attempt} attempts!"
+          fi
+        else
+          success_count=0  # Reset success count on failure
+          echo "  ❌ Both connection methods failed"
+        fi
+
+        if [ "$connection_successful" = "false" ]; then
+          echo "  ⏳ Waiting ${connection_retry_interval}s before retry... (${connection_wait_time}s elapsed)"
+          sleep $connection_retry_interval
+          connection_wait_time=$((connection_wait_time + connection_retry_interval))
+        fi
+      done
+
+      if [ "$connection_successful" = "false" ]; then
+        echo "❌ Connection test failed after ${connection_wait_time}s"
+        echo ""
+        echo "🔍 Diagnostic Information:"
+
+        # Additional diagnostics
+        echo "📍 Final DNS check:"
+        nslookup "${target_host}" 2>&1
+
+        echo "🔍 Detailed connection attempt:"
+        timeout 10 nc -v "${target_host}" "${target_port}" 2>&1 || echo "Detailed netcat failed"
+
+        echo "🌐 Network trace (first 3 hops):"
+        timeout 10 traceroute -m 3 "${target_host}" 2>/dev/null || echo "traceroute not available"
+
+        echo "💡 Possible issues:"
+        echo "   - Service is still starting up (StatefulSet can take time)"
+        echo "   - Load balancer is not fully configured"
+        echo "   - Health checks are interfering with connections"
+        echo "   - Resource constraints causing intermittent availability"
+        echo "   - Certificate/TLS issues (port ${target_port})"
+
+        exit 1
+      fi
+
+      # Step 3: Enhanced stability test
+      echo ""
+      echo "✅ Phase 3: Enhanced Stability Test"
+      echo "🔄 Running ${stability_tests} stability tests over 30 seconds..."
+
+      passed_tests=0
+      failed_tests=0
+
+      for test_num in $(seq 1 $stability_tests); do
+        echo "🧪 Stability test ${test_num}/${stability_tests} at $(date)..."
+
+        # Test both netcat and curl again
+        nc_stable=false
+        curl_stable=false
+
+        if timeout 8 nc -z "${target_host}" "${target_port}" > /dev/null 2>&1; then
+          nc_stable=true
+        fi
+
+        if timeout 12 curl -k -s --connect-timeout 8 --max-time 12 \
+           "https://${target_host}:${target_port}" > /dev/null 2>&1; then
+          curl_stable=true
+        fi
+
+        if [ "$nc_stable" = "true" ] || [ "$curl_stable" = "true" ]; then
+          passed_tests=$((passed_tests + 1))
+          echo "  ✅ Test ${test_num} passed (nc:${nc_stable}, curl:${curl_stable})"
+        else
+          failed_tests=$((failed_tests + 1))
+          echo "  ❌ Test ${test_num} failed (nc:${nc_stable}, curl:${curl_stable})"
+        fi
+
+        # Wait between tests (except last one)
+        if [ $test_num -lt $stability_tests ]; then
+          sleep 6
+        fi
+      done
+
+      echo ""
+      echo "📊 Stability Test Results:"
+      echo "  Passed: ${passed_tests}/${stability_tests}"
+      echo "  Failed: ${failed_tests}/${stability_tests}"
+      echo "  Success rate: $((passed_tests * 100 / stability_tests))%"
+
+      if [ $passed_tests -ge $success_threshold ]; then
+        echo "✅ Stability test PASSED (${passed_tests}/${stability_tests} >= ${success_threshold})"
+
+        # Final summary
+        echo ""
+        echo "🎉 Connection test completed successfully!"
+        echo "📊 Final Summary:"
+        echo "  Target: ${target_host}:${target_port}"
+        echo "  Connection attempts: ${attempt}"
+        echo "  Stability: ${passed_tests}/${stability_tests} tests passed"
+        echo "  Overall status: HEALTHY with acceptable intermittency"
+        echo "⏰ Completed at: $(date)"
+
+        exit 0
+      else
+        echo "❌ Stability test FAILED (${passed_tests}/${stability_tests} < ${success_threshold})"
+        echo ""
+        echo "⚠️  The service is reachable but unstable."
+        echo "💡 This often indicates:"
+        echo "   - StatefulSet pods are still starting up"
+        echo "   - Load balancer health checks are cycling"
+        echo "   - Resource limits causing pod restarts"
+        echo "   - Network connectivity issues"
+        echo ""
+        echo "🔍 Recommended actions:"
+        echo "   1. Check pod status: kubectl get pods -n {{ .Release.Namespace }}"
+        echo "   2. Check pod logs: kubectl logs <pod-name> -n {{ .Release.Namespace }}"
+        echo "   3. Check service endpoints: kubectl get endpoints -n {{ .Release.Namespace }}"
+        echo "   4. Wait longer and re-run the test"
+
+        exit 1
+      fi
+{{- end }}

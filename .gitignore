@@ -3,5 +3,6 @@ values-*.local.yaml
 secrets/
 *.secret.yaml
 lab-setup/
-charts/
 *.tgz
+charts/*/charts/*.tgz
+.cr-release-packages/

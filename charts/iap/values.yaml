@@ -20,6 +20,14 @@ mountAdapterVolume: false
 # Stdout.
 mountLogVolume: false
 
+tests:
+  enabled: true
+  readinessTimeout: 300
+  image:
+    repository: busybox
+    tag: latest
+    pullPolicy: IfNotPresent
+
 certManager:
   # -- Toggles the use of cert-manager for managing the TLS certificates. Setting this to false
   # means that creation of the TLS certificates will be manual and outside of the chart.
@@ -90,7 +98,7 @@ storageClass:
   # -- Toggle the use of storageClass
   enabled: true
   # -- The name of the storageClass
-  name: ""
+  name: "example-storage-class"
   # -- Specifies which volume plugin provisions the storage
   provisioner: ""
   # -- What happens to PersistentVolumes when released. Itential recommends "retain".
@@ -140,7 +148,7 @@ ingress:
     # -- Enable a load balancer that will distribute request to all Itential pods
     enabled: true
     # -- The Load balancer host name
-    host: iap.pet-sbx.itential.io
+    host: iap.example.com
     # -- The path
     path: /
   # Direct access configuration
@@ -148,7 +156,7 @@ ingress:
     # -- Enable direct access to all Itential pods.
     enabled: true
     # -- The base domain for each Itential pod, used by the templates to create host names.
-    baseDomain: pet-sbx.itential.io
+    baseDomain: example.com
     # -- The path
     path: /
   # -- The annotations for this ingress object. These are passed into the template as is and will
