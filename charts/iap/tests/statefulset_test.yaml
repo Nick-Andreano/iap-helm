@@ -27,6 +27,8 @@ tests:
       securityContext: {}
       persistentVolumeClaims:
         enabled: false
+      postInstall:
+        enabled: false
     asserts:
       - hasDocuments:
           count: 1
@@ -65,6 +67,8 @@ tests:
       podSecurityContext: {}
       securityContext: {}
       persistentVolumeClaims:
+        enabled: false
+      postInstall:
         enabled: false
     asserts:
       - equal:
@@ -125,6 +129,8 @@ tests:
       securityContext: {}
       persistentVolumeClaims:
         enabled: false
+      postInstall:
+        enabled: false
     asserts:
       - isSubset:
           path: spec.selector.matchLabels
@@ -152,6 +158,8 @@ tests:
         prometheus.io/scrape: "true"
         prometheus.io/port: "8080"
         custom.annotation: "test-value"
+      postInstall:
+        enabled: false
     asserts:
       - equal:
           path: spec.template.metadata.annotations["prometheus.io/scrape"]
@@ -182,6 +190,8 @@ tests:
       podLabels:
         environment: "production"
         tier: "backend"
+      postInstall:
+        enabled: false
     asserts:
       - equal:
           path: spec.template.metadata.labels.environment
@@ -209,6 +219,8 @@ tests:
       imagePullSecrets:
         - name: "docker-registry-secret"
         - name: "private-registry-secret"
+      postInstall:
+        enabled: false
     asserts:
       - equal:
           path: spec.template.spec.imagePullSecrets[0].name
@@ -232,6 +244,8 @@ tests:
       podSecurityContext: {}
       securityContext: {}
       persistentVolumeClaims:
+        enabled: false
+      postInstall:
         enabled: false
       env:
         NODE_ENV: "production"
@@ -265,6 +279,8 @@ tests:
         periodSeconds: 10
         successThreshold: 1
         timeoutSeconds: 5
+      postInstall:
+        enabled: false
     asserts:
       - equal:
           path: spec.template.spec.containers[0].startupProbe.httpGet.path
@@ -305,6 +321,8 @@ tests:
         periodSeconds: 30
         successThreshold: 1
         timeoutSeconds: 10
+      postInstall:
+        enabled: false
     asserts:
       - equal:
           path: spec.template.spec.containers[0].livenessProbe.httpGet.path
@@ -339,6 +357,8 @@ tests:
         periodSeconds: 10
         successThreshold: 1
         timeoutSeconds: 5
+      postInstall:
+        enabled: false
     asserts:
       - equal:
           path: spec.template.spec.containers[0].readinessProbe.httpGet.path
@@ -371,6 +391,8 @@ tests:
         periodSeconds: 10
         successThreshold: 1
         timeoutSeconds: 5
+      postInstall:
+        enabled: false
     asserts:
       - equal:
           path: spec.template.spec.containers[0].startupProbe.httpGet.scheme
@@ -393,6 +415,8 @@ tests:
       persistentVolumeClaims:
         enabled: false
       nameOverride: "test-app"
+      postInstall:
+        enabled: false
     asserts:
       - contains:
           path: spec.template.spec.volumes
@@ -430,6 +454,8 @@ tests:
         limits:
           memory: "512Mi"
           cpu: "500m"
+      postInstall:
+        enabled: false
     asserts:
       - equal:
           path: spec.template.spec.containers[0].resources.requests.memory
@@ -466,6 +492,8 @@ tests:
           storage: "5Gi"
       storageClass:
         name: "fast-ssd"
+      postInstall:
+        enabled: false
     asserts:
       - equal:
           path: spec.volumeClaimTemplates[0].metadata.name
@@ -505,6 +533,8 @@ tests:
       nodeSelector:
         disktype: "ssd"
         kubernetes.io/arch: "amd64"
+      postInstall:
+        enabled: false
     asserts:
       - equal:
           path: spec.template.spec.nodeSelector.disktype
@@ -539,6 +569,8 @@ tests:
                     values:
                       - test-app
               topologyKey: kubernetes.io/hostname
+      postInstall:
+        enabled: false
     asserts:
       - exists:
           path: spec.template.spec.affinity.podAntiAffinity
@@ -567,6 +599,8 @@ tests:
           operator: "Equal"
           value: "database"
           effect: "NoSchedule"
+      postInstall:
+        enabled: false
     asserts:
       - equal:
           path: spec.template.spec.tolerations[0].key
@@ -609,6 +643,8 @@ tests:
           mountPath: "/etc/config"
         - name: "secret-volume"
           mountPath: "/etc/secrets"
+      postInstall:
+        enabled: false
     asserts:
       - contains:
           path: spec.template.spec.volumes
@@ -644,6 +680,8 @@ tests:
         enabled: false
       readinessProbe:
         enabled: false
+      postInstall:
+        enabled: false
     asserts:
       - isNull:
           path: spec.template.spec.containers[0].startupProbe
@@ -673,6 +711,8 @@ tests:
       livenessProbe:
         enabled: false
       readinessProbe:
+        enabled: false
+      postInstall:
         enabled: false
     asserts:
       - exists:
@@ -706,7 +746,41 @@ tests:
         enabled: false
       podAnnotations:
         foo: bar
+      postInstall:
+        enabled: false
     asserts:
       - equal:
           path: spec.template.metadata.annotations["foo"]
           value: bar
+
+  - it: should include post-install container when postInstall is enabled
+    set:
+      statefulset.enabled: true
+      replicaCount: 1
+      image:
+        repository: "test/app"
+        tag: "v1.0.0"
+        pullPolicy: "IfNotPresent"
+      service:
+        port: 80
+      applicationPort: 8080
+      useTLS: false
+      podSecurityContext: {}
+      securityContext: {}
+      persistentVolumeClaims:
+        enabled: false
+      postInstall:
+        enabled: true
+        setupScript: |
+          echo "Running post-install setup"
+          curl -X POST http://localhost:8080/setup
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[1].name
+          value: "iap-post-setup"
+      - equal:
+          path: spec.template.spec.containers[1].image
+          value: "curlimages/curl:7.85.0"
+      - contains:
+          path: spec.template.spec.containers[1].command
+          content: "/bin/sh"

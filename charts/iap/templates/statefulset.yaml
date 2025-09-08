@@ -143,6 +143,15 @@ spec:
         {{- with .Values.volumeMounts }}
         {{- toYaml . | nindent 10 }}
         {{- end }}
+      {{- if .Values.postInstall.enabled }}
+      - name: iap-post-setup
+        image: curlimages/curl:7.85.0
+        command:
+          - /bin/sh
+          - -c
+          - |
+{{ tpl .Values.postInstall.setupScript . | indent 12 }}
+      {{- end }}
       volumes:
         {{- if .Values.useTLS }}
         - name: platform-cert-volume
