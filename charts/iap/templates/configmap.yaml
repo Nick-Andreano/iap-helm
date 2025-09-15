@@ -15,3 +15,248 @@ data:
       - cmdline:
           - python3
 {{- end -}}
+{{- if and .Values.mongoqueryExporter.enabled -}}
+{{- if and $.Values.ingress.enabled $.Values.processExporter.enabled -}}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mongodb-query-exporter
+  namespace: my-namespace-name
+data:
+  config.yaml: |
+    version: 3.0
+    global:
+      queryTimeout: 15s
+      maxConnection: 100
+    log:
+      level: info
+    aggregations:
+      ## scrape the wfe_job_metrics collection
+      ## * iap_jobs_completed_total
+      ## * iap_jobs_runtime_total
+      ##
+      - database: itential
+        collection: wfe_job_metrics
+        mode: pull
+        metrics:
+          - name: iap_jobs_completed_total
+            help: The number of jobs completed (labelled by workflow).
+            constLabels:
+              database: itential
+            labels: [ workflow ]
+            value: count
+          - name: iap_jobs_runtime_total
+            help: The runtime of the completed jobs (labelled by workflow).
+            constLabels:
+              database: itential
+            labels: [ workflow ]
+            value: duration
+        pipeline: |
+          [
+            {
+              "$addFields": {
+                "latestMetrics": { "$last": "$metrics" }
+              }
+            },
+            {
+              "$group": {
+                 "_id": "$workflow.name",
+                 "count": { "$sum": "$latestMetrics.jobsComplete" },
+                 "duration": { "$sum": "$latestMetrics.totalRunTime" }
+              }
+            },
+            {
+              "$project": {
+                "_id": 0,
+                "workflow": "$_id",
+                "count": "$count",
+                "duration": "$duration"
+              }
+            }
+          ]
+      ## scrape the wfe_task_metrics collection success metrics
+      ## * iap_tasks_completed_total{status="success"}
+      ## * iap_tasks_runtime_total{status="success"}
+      ##
+      - database: itential
+        collection: wfe_task_metrics
+        mode: pull
+        metrics:
+          - name: iap_tasks_completed_total
+            help: The number of tasks completed (labelled by app, task_name and status).
+            constLabels:
+              database: itential
+              status: success
+            labels: [ app, task_name ]
+            value: count
+          - name: iap_tasks_runtime_total
+            help: The runtime of the completed tasks (labelled by app, task_name and status).
+            constLabels:
+              database: itential
+              status: success
+            labels: [ app, task_name ]
+            value: duration
+        pipeline: |
+          [
+            {
+              "$match": { "global": true }
+            },
+            {
+              "$addFields": {
+                "latestMetrics": { "$last": "$metrics" }
+              }
+            },
+            {
+              "$group": {
+                "_id": { "app": "$app", "task_name": "$name" },
+                "count": { "$sum": { "$ifNull": [ "$latestMetrics.totalSuccesses", 0 ] } },
+                "duration": { "$sum": { "$ifNull": [ "$latestMetrics.totalSuccessRunTime", 0 ] } }
+              }
+            },
+            {
+              "$project": {
+                "_id": 0,
+                "app": { "$ifNull": [ "$_id.app", "n/a" ] },
+                "task_name": "$_id.task_name",
+                "count": "$count",
+                "duration": "$duration"
+              }
+            }
+          ]
+      ## scrape the wfe_task_metrics collection error metrics
+      ## * iap_tasks_completed_total{status="error"}
+      ## * iap_tasks_runtime_total{status="error"}
+      ##
+      - database: itential
+        collection: wfe_task_metrics
+        mode: pull
+        metrics:
+          - name: iap_tasks_completed_total
+            help: The number of tasks completed (labelled by app, task_name and status).
+            constLabels:
+              database: itential
+              status: error
+            labels: [ app, task_name ]
+            value: count
+          - name: iap_tasks_runtime_total
+            help: The runtime of the completed tasks (labelled by app, task_name and status).
+            constLabels:
+              database: itential
+              status: error
+            labels: [ app, task_name ]
+            value: duration
+        pipeline: |
+          [
+            {
+              "$match": { "global": true }
+            },
+            {
+              "$addFields": {
+                "latestMetrics": { "$last": "$metrics" }
+              }
+            },
+            {
+              "$group": {
+                "_id": { "app": "$app", "task_name": "$name" },
+                "count": { "$sum": { "$ifNull": [ "$latestMetrics.totalErrors", 0 ] } },
+                "duration": { "$sum": { "$ifNull": [ "$latestMetrics.totalErrorRunTime", 0 ] } }
+              }
+            },
+            {
+              "$project": {
+                "_id": 0,
+                "app": { "$ifNull": [ "$_id.app", "n/a" ] },
+                "task_name": "$_id.task_name",
+                "count": "$count",
+                "duration": "$duration"
+              }
+            }
+          ]
+      ## scrape the number of jobs grouped by status
+      ##
+      - database: itential
+        collection: jobs
+        mode: pull
+        metrics:
+          - name: iap_jobs_status
+            help: The number of jobs grouped by status (running, error, complete, canceled, pause).
+            constLabels:
+              database: itential
+            labels: [ _id ]
+            value: count
+        pipeline: |-
+          [
+            { "$sort": { "status": 1 } },
+            { "$group": { "_id": "$status", "count": { "$sum": 1 } } }
+          ]
+      ## scrape the tasks collection for long-running tasks
+      ##
+      ## long-running tasks are those running for > 5 minutes
+      ##
+      - database: itential
+        collection: tasks
+        mode: pull
+        metrics:
+          - name: iap_tasks_long_running_total
+            help: The number of long-running tasks (greater than 5 mins, labelled by app and task_name).
+            constLabels:
+              database: itential
+            labels: [ app, task_name ]
+            value: count
+          - name: iap_tasks_long_running_duration
+            help: The duration of long-running tasks (greater than 5 mins, labelled by app and task_name).
+            constLabels:
+              database: itential
+            labels: [ app, task_name ]
+            value: sumAge
+        pipeline: |
+          [
+            {
+              "$match": {
+                "type": { "$in": [ "automatic", "operation" ] },
+                "metrics.retrying": { "$in": [ null, true, false ] },
+                "status": "running"
+              }
+            },
+            {
+              "$addFields": {
+                "age": {
+                  "$dateDiff": {
+                    "startDate": { "$dateFromString": { "dateString": "$metrics.start_time" } },
+                    "endDate": "$$NOW",
+                    "unit": "millisecond"
+                  }
+                }
+              }
+            },
+            {
+              "$match": {
+                "age": { "$gt": 300000 }
+              }
+            },
+            {
+              "$group": {
+                "_id": { "app": "$app", "task_name": "$name" },
+                "total": { "$sum": 1 },
+                "avgAge": { "$avg": "$age" },
+                "maxAge": { "$max": "$age" },
+                "minAge": { "$min": "$age" },
+                "sumAge": { "$sum": "$age" }
+              }
+            },
+            {
+              "$project": {
+                "_id": 0,
+                "app": "$_id.app",
+                "task_name": "$_id.task_name",
+                "count": "$total",
+                "avgAge": "$avgAge",
+                "maxAge": "$maxAge",
+                "minAge": "$minAge",
+                "sumAge": "$sumAge"
+              }
+            }
+          ]
+
+{{- end -}}
