@@ -15,7 +15,7 @@ data:
       - cmdline:
           - python3
 {{- end -}}
-{{- if and .Values.mongoqueryExporter.enabled -}}
+{{- if .Values.mongoqueryExporter.enabled -}}
 ---
 apiVersion: v1
 kind: ConfigMap

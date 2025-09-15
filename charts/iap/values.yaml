@@ -640,3 +640,18 @@ env:
   # END IAP CONFIGURATION PROPERTIES
   #
 
+# Process exporter configuration
+processExporter:
+  # -- Enable the process exporter sidecar container
+  enabled: false
+  image:
+    # -- Process exporter image repository  
+    repository: ncabatoff/process-exporter
+    # -- Process exporter image tag
+    tag: latest
+
+# MongoDB query exporter configuration
+mongoqueryExporter:
+  # -- Enable the MongoDB query exporter
+  enabled: false
+
