@@ -16,7 +16,6 @@ data:
           - python3
 {{- end -}}
 {{- if and .Values.mongoqueryExporter.enabled -}}
-{{- if and $.Values.ingress.enabled $.Values.processExporter.enabled -}}
 ---
 apiVersion: v1
 kind: ConfigMap
