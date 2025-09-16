@@ -83,7 +83,7 @@ data:
       ## * iap_tasks_completed_total{status="success"}
       ## * iap_tasks_runtime_total{status="success"}
       ##
-      - database: ite{{.Values.env.ITENTIAL_MONGO_DB_NAME}}ntial
+      - database: {{.Values.env.ITENTIAL_MONGO_DB_NAME}}
         collection: wfe_task_metrics
         mode: pull
         metrics:

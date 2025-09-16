@@ -25,3 +25,29 @@ spec:
     matchLabels:
       app.kubernetes.io/name: iap
 {{- end -}}
+{{- if and .Values.mongoqueryExporter .Values.mongoqueryExporter.enabled .Values.mongoqueryExporter.podMonitor.enabled -}}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: {{ include "iap.fullname" . }}-mongodb-query-exporter
+  {{- if .Values.mongoqueryExporter.podMonitor.namespace }}
+  namespace: {{ .Values.mongoqueryExporter.podMonitor.namespace }}
+  {{- end }}
+  labels:
+    {{- include "iap.labels" . | nindent 4 }}
+    app.kubernetes.io/component: "mongodb-query-exporter"
+spec:
+  selector:
+    matchLabels:
+      {{- include "iap.selectorLabels" . | nindent 6 }}
+  podMetricsEndpoints:
+  - port: metrics
+    path: /metrics
+    {{- if .Values.mongoqueryExporter.podMonitor.interval }}
+    interval: {{ .Values.mongoqueryExporter.podMonitor.interval }}
+    {{- end }}
+    {{- if .Values.mongoqueryExporter.podMonitor.scrapeTimeout }}
+    scrapeTimeout: {{ .Values.mongoqueryExporter.podMonitor.scrapeTimeout }}
+    {{- end }}
+{{- end -}}

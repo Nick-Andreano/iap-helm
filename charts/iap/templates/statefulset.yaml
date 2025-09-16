@@ -140,9 +140,9 @@ spec:
           - name: "iap-assets-volume"
             mountPath: "/opt/itential/platform/services/custom"
           {{- end }}
-        {{- with .Values.volumeMounts }}
-        {{- toYaml . | nindent 10 }}
-        {{- end }}
+          {{- with .Values.volumeMounts }}
+          {{- toYaml . | nindent 10 }}
+          {{- end }}
       {{- if .Values.processExporter.enabled }}
       - name: process-exporter
         args:
