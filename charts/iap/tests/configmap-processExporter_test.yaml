@@ -1,6 +1,6 @@
-suite: test configmap template
+suite: test configmap-processExporter template
 templates:
-  - configmap.yaml
+  - configmap-processExporter.yaml
 values:
   - ../tests/test-values.yaml
 tests:

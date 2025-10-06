@@ -1,0 +1,157 @@
+suite: test configmap-mongoQueryExporter template
+templates:
+  - configmap-mongoQueryExporter.yaml
+values:
+  - ../tests/test-values.yaml
+tests:
+  - it: should create ConfigMap when mongoqueryExporter is enabled
+    set:
+      mongoqueryExporter:
+        enabled: true
+      env:
+        ITENTIAL_MONGO_DB_NAME: "testdb"
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: ConfigMap
+      - isAPIVersion:
+          of: v1
+      - equal:
+          path: metadata.name
+          value: "mongodb-query-exporter"
+
+  - it: should not create ConfigMap when mongoqueryExporter is disabled
+    set:
+      mongoqueryExporter:
+        enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: should not create ConfigMap when mongoqueryExporter is not defined
+    set: {}
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: should have correct labels when mongoqueryExporter is enabled
+    set:
+      mongoqueryExporter:
+        enabled: true
+      env:
+        ITENTIAL_MONGO_DB_NAME: "testdb"
+    asserts:
+      - exists:
+          path: metadata.labels
+      - exists:
+          path: metadata.labels["app.kubernetes.io/name"]
+      - exists:
+          path: metadata.labels["app.kubernetes.io/instance"]
+      - equal:
+          path: metadata.labels["app.kubernetes.io/component"]
+          value: "mongodb-query-exporter"
+      - equal:
+          path: metadata.labels["app.kubernetes.io/name"]
+          value: "iap"
+      - equal:
+          path: metadata.labels["app.kubernetes.io/instance"]
+          value: "RELEASE-NAME"
+
+  - it: should have correct annotations when mongoqueryExporter is enabled
+    set:
+      mongoqueryExporter:
+        enabled: true
+      env:
+        ITENTIAL_MONGO_DB_NAME: "testdb"
+    asserts:
+      - exists:
+          path: metadata.annotations
+      - equal:
+          path: metadata.annotations["kubernetes.io/description"]
+          value: "Itential Mongo Query Exporter"
+      - exists:
+          path: metadata.annotations["itential.com/copyright"]
+      - exists:
+          path: metadata.annotations["itential.com/license"]
+      - exists:
+          path: metadata.annotations["helm.sh/template-file"]
+
+  - it: should have correct configuration data structure
+    set:
+      mongoqueryExporter:
+        enabled: true
+      env:
+        ITENTIAL_MONGO_DB_NAME: "testdb"
+    asserts:
+      - exists:
+          path: data
+      - exists:
+          path: data["config.yaml"]
+
+  - it: should contain correct database name in configuration
+    set:
+      mongoqueryExporter:
+        enabled: true
+      env:
+        ITENTIAL_MONGO_DB_NAME: "customdb"
+    asserts:
+      - matchRegex:
+          path: data["config.yaml"]
+          pattern: "database: customdb"
+
+  - it: should contain aggregations in configuration
+    set:
+      mongoqueryExporter:
+        enabled: true
+      env:
+        ITENTIAL_MONGO_DB_NAME: "testdb"
+    asserts:
+      - matchRegex:
+          path: data["config.yaml"]
+          pattern: "aggregations:"
+
+  - it: should contain job metrics configuration
+    set:
+      mongoqueryExporter:
+        enabled: true
+      env:
+        ITENTIAL_MONGO_DB_NAME: "testdb"
+    asserts:
+      - matchRegex:
+          path: data["config.yaml"]
+          pattern: "collection: wfe_job_metrics"
+      - matchRegex:
+          path: data["config.yaml"]
+          pattern: "name: iap_jobs_completed_total"
+
+  - it: should contain task metrics configuration
+    set:
+      mongoqueryExporter:
+        enabled: true
+      env:
+        ITENTIAL_MONGO_DB_NAME: "testdb"
+    asserts:
+      - matchRegex:
+          path: data["config.yaml"]
+          pattern: "collection: wfe_task_metrics"
+      - matchRegex:
+          path: data["config.yaml"]
+          pattern: "name: iap_tasks_completed_total"
+
+  - it: should work with default values from values.yaml
+    set:
+      mongoqueryExporter:
+        enabled: true
+      env:
+        ITENTIAL_MONGO_DB_NAME: "itential"
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: ConfigMap
+      - equal:
+          path: metadata.name
+          value: "mongodb-query-exporter"
+      - exists:
+          path: data["config.yaml"]
