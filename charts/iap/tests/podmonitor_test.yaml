@@ -1,0 +1,296 @@
+suite: test podmonitor template
+templates:
+  - PodMonitor.yaml
+values:
+  - ../tests/test-values.yaml
+tests:
+  - it: should create PodMonitor when processExporter is enabled
+    set:
+      processExporter:
+        enabled: true
+        port: 9256
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: PodMonitor
+      - isAPIVersion:
+          of: monitoring.coreos.com/v1
+      - equal:
+          path: metadata.name
+          value: iap-process-exporter
+
+  - it: should not create PodMonitor when processExporter is disabled
+    set:
+      processExporter:
+        enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: should not create PodMonitor when processExporter is not defined
+    set:
+      processExporter: null
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: should have correct labels when processExporter is enabled
+    set:
+      processExporter:
+        enabled: true
+        port: 9256
+    asserts:
+      - exists:
+          path: metadata.labels
+      - exists:
+          path: metadata.labels["app.kubernetes.io/name"]
+      - exists:
+          path: metadata.labels["app.kubernetes.io/instance"]
+      - equal:
+          path: metadata.labels["app.kubernetes.io/component"]
+          value: "podmonitor"
+      - equal:
+          path: metadata.labels["app.kubernetes.io/name"]
+          value: iap
+      - equal:
+          path: metadata.labels["app.kubernetes.io/instance"]
+          value: RELEASE-NAME
+
+  - it: should have correct annotations when processExporter is enabled
+    set:
+      processExporter:
+        enabled: true
+        port: 9256
+    asserts:
+      - exists:
+          path: metadata.annotations
+      - equal:
+          path: metadata.annotations["kubernetes.io/description"]
+          value: "Itential Automation Platform Pod Monitor."
+      - exists:
+          path: metadata.annotations["itential.com/copyright"]
+      - exists:
+          path: metadata.annotations["itential.com/license"]
+      - exists:
+          path: metadata.annotations["helm.sh/template-file"]
+
+  - it: should have correct podMetricsEndpoints configuration
+    set:
+      processExporter:
+        enabled: true
+        port: 9256
+    asserts:
+      - exists:
+          path: spec.podMetricsEndpoints
+      - lengthEqual:
+          path: spec.podMetricsEndpoints
+          count: 1
+      - equal:
+          path: spec.podMetricsEndpoints[0].interval
+          value: "15s"
+      - equal:
+          path: spec.podMetricsEndpoints[0].path
+          value: "/metrics"
+      - equal:
+          path: spec.podMetricsEndpoints[0].port
+          value: "process-metrics"
+
+  - it: should have correct relabeling configuration
+    set:
+      processExporter:
+        enabled: true
+        port: 9256
+    asserts:
+      - exists:
+          path: spec.podMetricsEndpoints[0].relabelings
+      - lengthEqual:
+          path: spec.podMetricsEndpoints[0].relabelings
+          count: 2
+      - equal:
+          path: spec.podMetricsEndpoints[0].relabelings[0].action
+          value: "keep"
+      - equal:
+          path: spec.podMetricsEndpoints[0].relabelings[0].regex
+          value: "([\\d\\.]+):9256"
+      - contains:
+          path: spec.podMetricsEndpoints[0].relabelings[0].sourceLabels
+          content: "__address__"
+
+  - it: should have labeldrop relabeling for kubectl annotation
+    set:
+      processExporter:
+        enabled: true
+        port: 9256
+    asserts:
+      - equal:
+          path: spec.podMetricsEndpoints[0].relabelings[1].action
+          value: "labeldrop"
+      - equal:
+          path: spec.podMetricsEndpoints[0].relabelings[1].regex
+          value: "__meta_kubernetes_service_annotation_kubectl_kubernetes_io_last_applied_configuration"
+
+  - it: should have correct jobLabel configuration
+    set:
+      processExporter:
+        enabled: true
+        port: 9256
+    asserts:
+      - equal:
+          path: spec.jobLabel
+          value: "app.kubernetes.io/name"
+
+  - it: should have correct namespaceSelector
+    set:
+      processExporter:
+        enabled: true
+        port: 9256
+    asserts:
+      - exists:
+          path: spec.namespaceSelector
+      - exists:
+          path: spec.namespaceSelector.matchNames
+
+  - it: should have correct selector configuration
+    set:
+      processExporter:
+        enabled: true
+        port: 9256
+    asserts:
+      - exists:
+          path: spec.selector
+      - exists:
+          path: spec.selector.matchLabels
+      - equal:
+          path: spec.selector.matchLabels["app.kubernetes.io/name"]
+          value: "iap"
+
+  - it: should work with different processExporter port values
+    set:
+      processExporter:
+        enabled: true
+        port: 8080
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: PodMonitor
+      - equal:
+          path: spec.podMetricsEndpoints[0].relabelings[0].regex
+          value: "([\\d\\.]+):8080"
+
+  - it: should work with custom port in relabeling regex
+    set:
+      processExporter:
+        enabled: true
+        port: 7777
+    asserts:
+      - equal:
+          path: spec.podMetricsEndpoints[0].relabelings[0].regex
+          value: "([\\d\\.]+):7777"
+
+  - it: should work with default port when not specified
+    set:
+      processExporter:
+        enabled: true
+    asserts:
+      - hasDocuments:
+          count: 1
+      - equal:
+          path: spec.podMetricsEndpoints[0].relabelings[0].regex
+          value: "([\\d\\.]+):9256"
+
+  - it: should work with default values from values.yaml
+    values:
+      - ../values.yaml
+    set:
+      processExporter:
+        enabled: true
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: PodMonitor
+      - equal:
+          path: metadata.name
+          value: iap-process-exporter
+      - exists:
+          path: spec.podMetricsEndpoints
+      - exists:
+          path: spec.selector
+
+  - it: should handle edge case with very high port number
+    set:
+      processExporter:
+        enabled: true
+        port: 65535
+    asserts:
+      - hasDocuments:
+          count: 1
+      - equal:
+          path: spec.podMetricsEndpoints[0].relabelings[0].regex
+          value: "([\\d\\.]+):65535"
+
+  - it: should handle edge case with low port number
+    set:
+      processExporter:
+        enabled: true
+        port: 1
+    asserts:
+      - hasDocuments:
+          count: 1
+      - equal:
+          path: spec.podMetricsEndpoints[0].relabelings[0].regex
+          value: "([\\d\\.]+):1"
+
+  - it: should maintain consistent metrics endpoint configuration
+    set:
+      processExporter:
+        enabled: true
+        port: 9256
+    asserts:
+      - equal:
+          path: spec.podMetricsEndpoints[0].interval
+          value: "15s"
+      - equal:
+          path: spec.podMetricsEndpoints[0].path
+          value: "/metrics"
+      - equal:
+          path: spec.podMetricsEndpoints[0].port
+          value: "process-metrics"
+      - lengthEqual:
+          path: spec.podMetricsEndpoints[0].relabelings
+          count: 2
+
+  - it: should have proper selector targeting iap pods
+    set:
+      processExporter:
+        enabled: true
+        port: 9256
+    asserts:
+      - exists:
+          path: spec.selector.matchLabels
+      - equal:
+          path: spec.selector.matchLabels["app.kubernetes.io/name"]
+          value: "iap"
+
+  - it: should include all required metadata fields
+    set:
+      processExporter:
+        enabled: true
+        port: 9256
+    asserts:
+      - exists:
+          path: metadata.name
+      - exists:
+          path: metadata.labels
+      - exists:
+          path: metadata.annotations
+      - exists:
+          path: spec.podMetricsEndpoints
+      - exists:
+          path: spec.jobLabel
+      - exists:
+          path: spec.namespaceSelector
+      - exists:
+          path: spec.selector

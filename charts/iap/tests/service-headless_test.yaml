@@ -464,3 +464,140 @@ tests:
       - equal:
           path: metadata.annotations["foo"]
           value: bar
+
+  - it: should include process-metrics port when processExporter is enabled
+    set:
+      replicaCount: 1
+      service:
+        name: "process-exporter-service"
+        type: "ClusterIP"
+        port: 443
+      applicationPort: 3443
+      useWebSockets: false
+      processExporter:
+        enabled: true
+        port: 9256
+    asserts:
+      - lengthEqual:
+          path: spec.ports
+          count: 2
+        documentIndex: 0
+      - equal:
+          path: spec.ports[1].name
+          value: "process-metrics"
+        documentIndex: 0
+      - equal:
+          path: spec.ports[1].port
+          value: 9256
+        documentIndex: 0
+      - equal:
+          path: spec.ports[1].targetPort
+          value: 9256
+        documentIndex: 0
+      - equal:
+          path: spec.ports[1].protocol
+          value: "TCP"
+        documentIndex: 0
+
+  - it: should not include process-metrics port when processExporter is disabled
+    set:
+      replicaCount: 1
+      service:
+        name: "no-process-exporter-service"
+        type: "ClusterIP"
+        port: 443
+      applicationPort: 3443
+      useWebSockets: false
+      processExporter:
+        enabled: false
+    asserts:
+      - lengthEqual:
+          path: spec.ports
+          count: 1
+        documentIndex: 0
+      - equal:
+          path: spec.ports[0].name
+          value: "https"
+        documentIndex: 0
+
+  - it: should include process-metrics port on all replicas when processExporter is enabled
+    set:
+      replicaCount: 3
+      service:
+        name: "multi-replica-process-exporter"
+        port: 443
+      applicationPort: 3443
+      processExporter:
+        enabled: true
+        port: 9256
+    asserts:
+      - hasDocuments:
+          count: 3
+      # Check first replica
+      - lengthEqual:
+          path: spec.ports
+          count: 2
+        documentIndex: 0
+      - equal:
+          path: spec.ports[1].name
+          value: "process-metrics"
+        documentIndex: 0
+      - equal:
+          path: spec.ports[1].port
+          value: 9256
+        documentIndex: 0
+      # Check last replica
+      - lengthEqual:
+          path: spec.ports
+          count: 2
+        documentIndex: 2
+      - equal:
+          path: spec.ports[1].name
+          value: "process-metrics"
+        documentIndex: 2
+      - equal:
+          path: spec.ports[1].port
+          value: 9256
+        documentIndex: 2
+
+  - it: should maintain correct port order with processExporter enabled
+    set:
+      replicaCount: 1
+      service:
+        name: "port-order-test"
+        port: 8080
+      applicationPort: 9000
+      processExporter:
+        enabled: true
+        port: 9256
+    asserts:
+      - lengthEqual:
+          path: spec.ports
+          count: 2
+        documentIndex: 0
+      # Main service port should be first
+      - equal:
+          path: spec.ports[0].name
+          value: "https"
+        documentIndex: 0
+      - equal:
+          path: spec.ports[0].port
+          value: 8080
+        documentIndex: 0
+      - equal:
+          path: spec.ports[0].targetPort
+          value: 9000
+        documentIndex: 0
+      # Process metrics port should be second
+      - equal:
+          path: spec.ports[1].name
+          value: "process-metrics"
+        documentIndex: 0
+      - equal:
+          path: spec.ports[1].port
+          value: 9256
+        documentIndex: 0
+      - equal:
+          path: spec.ports[1].targetPort
+          value: 9256
+        documentIndex: 0

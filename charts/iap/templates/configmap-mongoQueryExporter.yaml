@@ -1,21 +1,4 @@
-{{- if .Values.processExporter.enabled -}}
-# Copyright (c) 2025, Itential, Inc
-# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
-# Source: charts/iap/templates/configmap.yaml
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: iap-process-exporter
-data:
-  process-exporter.conf: |
-    process_names:
-      - cmdline:
-          - Pronghorn
-      - cmdline:
-          - python3
-{{- end -}}
-{{- if .Values.mongoqueryExporter.enabled -}}
+{{- if and .Values.mongoqueryExporter .Values.mongoqueryExporter.enabled -}}
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -34,7 +17,7 @@ data:
       queryTimeout: 15s
       maxConnection: 100
     log:
-      level: info
+      level: debug
     aggregations:
       ## scrape the wfe_job_metrics collection
       ## * iap_jobs_completed_total

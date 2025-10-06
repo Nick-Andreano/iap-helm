@@ -1,0 +1,31 @@
+{{- if and .Values.ingress.enabled .Values.mongoqueryExporter .Values.mongoqueryExporter.enabled -}}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "iap.fullname" . }}-mongodb-metrics-ingress
+  labels:
+    {{- include "iap.labels" . | nindent 4 }}
+    app.kubernetes.io/component: "mongodb-metrics-ingress"
+  annotations:
+    kubernetes.io/description: "Itential MongoDB Query Exporter Metrics Ingress - HTTP only."
+    {{- include "iap.annotations" . | nindent 4 }}
+    alb.ingress.kubernetes.io/backend-protocol: HTTP
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/load-balancer-name: "itential-mongodb-metrics-lb-{{ .Release.Namespace }}"
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  rules:
+  - host: {{ printf "%s-%s-mongodb.%s" (include "iap.name" .) .Release.Namespace .Values.ingress.directAccess.baseDomain | quote }}
+    http:
+      paths:
+      - backend:
+          service:
+            name: {{ include "iap.fullname" . }}-mongodb-query-exporter
+            port:
+              name: metrics
+        path: "/metrics-mongodb"
+        pathType: "Prefix"
+{{- end }}

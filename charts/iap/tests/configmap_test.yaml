@@ -1,0 +1,198 @@
+suite: test configmap template
+templates:
+  - configmap.yaml
+values:
+  - ../tests/test-values.yaml
+tests:
+  - it: should create ConfigMap when processExporter is enabled
+    set:
+      processExporter:
+        enabled: true
+        port: 9256
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: ConfigMap
+      - isAPIVersion:
+          of: v1
+      - equal:
+          path: metadata.name
+          value: iap-process-exporter
+
+  - it: should not create ConfigMap when processExporter is disabled
+    set:
+      processExporter:
+        enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: should not create ConfigMap when processExporter is not defined
+    set:
+      processExporter: null
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: should have correct labels when processExporter is enabled
+    set:
+      processExporter:
+        enabled: true
+        port: 9256
+    asserts:
+      - exists:
+          path: metadata.labels
+      - exists:
+          path: metadata.labels["app.kubernetes.io/name"]
+      - exists:
+          path: metadata.labels["app.kubernetes.io/instance"]
+      - equal:
+          path: metadata.labels["app.kubernetes.io/component"]
+          value: "iap-process-exporter-configMap"
+      - equal:
+          path: metadata.labels["app.kubernetes.io/name"]
+          value: iap
+      - equal:
+          path: metadata.labels["app.kubernetes.io/instance"]
+          value: RELEASE-NAME
+
+  - it: should have correct annotations when processExporter is enabled
+    set:
+      processExporter:
+        enabled: true
+        port: 9256
+    asserts:
+      - exists:
+          path: metadata.annotations
+      - equal:
+          path: metadata.annotations["kubernetes.io/description"]
+          value: "Itential Automation Platform Process exporter configMap."
+      - exists:
+          path: metadata.annotations["itential.com/copyright"]
+      - exists:
+          path: metadata.annotations["itential.com/license"]
+      - exists:
+          path: metadata.annotations["helm.sh/template-file"]
+
+  - it: should have correct process-exporter configuration data
+    set:
+      processExporter:
+        enabled: true
+        port: 9256
+    asserts:
+      - exists:
+          path: data
+      - exists:
+          path: data["process-exporter.conf"]
+      - exists:
+          path: data["web-config.yaml"]
+
+  - it: should contain Pronghorn process in configuration
+    set:
+      processExporter:
+        enabled: true
+        port: 9256
+    asserts:
+      - matchRegex:
+          path: data["process-exporter.conf"]
+          pattern: ".*Pronghorn.*"
+
+  - it: should contain python3 process in configuration
+    set:
+      processExporter:
+        enabled: true
+        port: 9256
+    asserts:
+      - matchRegex:
+          path: data["process-exporter.conf"]
+          pattern: ".*python3.*"
+
+  - it: should have TLS configuration in web-config
+    set:
+      processExporter:
+        enabled: true
+        port: 9256
+    asserts:
+      - matchRegex:
+          path: data["web-config.yaml"]
+          pattern: ".*tls_server_config.*"
+      - matchRegex:
+          path: data["web-config.yaml"]
+          pattern: ".*/etc/ssl/platform/tls.crt.*"
+      - matchRegex:
+          path: data["web-config.yaml"]
+          pattern: ".*/etc/ssl/platform/tls.key.*"
+
+  - it: should work with different processExporter port values
+    set:
+      processExporter:
+        enabled: true
+        port: 8080
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: ConfigMap
+      - equal:
+          path: metadata.name
+          value: iap-process-exporter
+
+  - it: should work with default values from values.yaml
+    values:
+      - ../values.yaml
+    set:
+      processExporter:
+        enabled: true
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: ConfigMap
+      - equal:
+          path: metadata.name
+          value: iap-process-exporter
+      - exists:
+          path: data["process-exporter.conf"]
+      - exists:
+          path: data["web-config.yaml"]
+
+  - it: should include process_names section in configuration
+    set:
+      processExporter:
+        enabled: true
+        port: 9256
+    asserts:
+      - matchRegex:
+          path: data["process-exporter.conf"]
+          pattern: ".*process_names:.*"
+
+  - it: should include cmdline sections for both processes
+    set:
+      processExporter:
+        enabled: true
+        port: 9256
+    asserts:
+      - matchRegex:
+          path: data["process-exporter.conf"]
+          pattern: "(?s).*cmdline:.*Pronghorn.*cmdline:.*python3.*"
+
+  - it: should have proper YAML structure in process-exporter.conf
+    set:
+      processExporter:
+        enabled: true
+        port: 9256
+    asserts:
+      - matchRegex:
+          path: data["process-exporter.conf"]
+          pattern: "process_names:\n.*- cmdline:\n.*- Pronghorn\n.*- cmdline:\n.*- python3"
+
+  - it: should have proper YAML structure in web-config.yaml
+    set:
+      processExporter:
+        enabled: true
+        port: 9256
+    asserts:
+      - matchRegex:
+          path: data["web-config.yaml"]
+          pattern: "tls_server_config:\n.*cert_file: /etc/ssl/platform/tls.crt\n.*key_file: /etc/ssl/platform/tls.key"

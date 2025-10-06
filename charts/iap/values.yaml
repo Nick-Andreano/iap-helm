@@ -258,6 +258,18 @@ tolerations: []
 # -- Additional affinities
 affinity: {}
 
+# Process exporter configuration for monitoring
+processExporter:
+  # -- Enable process exporter sidecar container
+  enabled: false
+  image:
+    # -- Process exporter image repository
+    repository: ncabatoff/process-exporter
+    # -- Process exporter image tag
+    tag: latest
+  # -- Process exporter metrics port
+  port: 9256
+
 # Configuration properties for Itential Automation Platform.
 # In most cases, the default values are sufficient. If the property is commented that means that
 # the default value is being used. This is a list of all possible values for convenience. The
@@ -654,4 +666,35 @@ processExporter:
 mongoqueryExporter:
   # -- Enable the MongoDB query exporter
   enabled: false
+  # -- Existing ConfigMap name for the exporter configuration
+  existingConfig:
+    name: mongodb-query-exporter
+  # -- Existing Secret name for the exporter credentials  
+  existingSecret:
+    name: mongodb-query-exporter
+  image:
+    # -- Image pull policy
+    pullPolicy: Always
+  # -- Pod monitor configuration
+  podMonitor:
+    # -- Enable PodMonitor for metrics scraping
+    enabled: true
+    # -- Namespace for the PodMonitor (optional)
+    namespace: ""
+    # -- Scraping interval
+    interval: 60s
+    # -- Scrape timeout
+    scrapeTimeout: 15s
+  # -- Resource limits and requests
+  resources:
+    limits:
+      memory: 250Mi
+      ephemeral-storage: 50Mi
+    requests:
+      cpu: 50m
+      memory: 250Mi
+      ephemeral-storage: 50Mi
+  # -- Environment variables
+  env:
+    MDBEXPORTER_MONGODB_QUERY_TIMEOUT: 15s
 

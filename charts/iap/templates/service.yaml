@@ -25,11 +25,5 @@ spec:
       targetPort: {{ .Values.websocketPort }}
       protocol: TCP
     {{- end }}
-    {{- if and .Values.processExporter .Values.processExporter.enabled }}
-    - name: process-metrics
-      port: 9256
-      targetPort: 9256
-      protocol: TCP
-    {{- end }}
   selector:
     {{- include "iap.selectorLabels" . | nindent 4 }}

@@ -1,0 +1,23 @@
+{{- if and .Values.mongoqueryExporter .Values.mongoqueryExporter.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "iap.fullname" . }}-mongodb-query-exporter
+  labels:
+    {{- include "iap.labels" . | nindent 4 }}
+    app.kubernetes.io/component: "mongodb-query-exporter"
+  annotations:
+    kubernetes.io/description: "MongoDB Query Exporter Service for metrics access."
+    {{- include "iap.annotations" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "iap.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: "mongodb-query-exporter"
+  ports:
+    - name: metrics
+      port: 9412
+      targetPort: 9412
+      protocol: TCP
+{{- end }}

@@ -1,12 +1,15 @@
-{{- if .Values.processExporter.enabled -}}
-# Copyright (c) 2024, Itential, Inc
-# GNU General Public License v3.0+ (see LICENSE or https://www.gnu.org/licenses/gpl-3.0.txt)
-# Source: charts/iap/templates/PodMonitor.yaml
+{{- if and $.Values.processExporter $.Values.processExporter.enabled -}}
 ---
 apiVersion: monitoring.coreos.com/v1
 kind: PodMonitor
 metadata:
   name: iap-process-exporter
+  labels:
+    {{- include "iap.labels" . | nindent 4 }}
+    app.kubernetes.io/component: "podmonitor"
+  annotations:
+    kubernetes.io/description: "Itential Automation Platform Pod Monitor."
+    {{- include "iap.annotations" . | nindent 4 }}
 spec:
   podMetricsEndpoints:
     - interval: 15s
@@ -14,13 +17,13 @@ spec:
       port: process-metrics
       relabelings:
         - action: keep
-          regex: ([\d\.]+):9256
+          regex: ([\d\.]+):{{ $.Values.processExporter.port | default 9256 }}
           sourceLabels: [ __address__ ]
         - action: labeldrop
           regex: __meta_kubernetes_service_annotation_kubectl_kubernetes_io_last_applied_configuration
   jobLabel: app.kubernetes.io/name
   namespaceSelector:
-    matchNames: [ {{ .Values.namespace }} ]
+    matchNames: [ {{ .Release.namespace }} ]
   selector:
     matchLabels:
       app.kubernetes.io/name: iap
@@ -41,6 +44,7 @@ spec:
   selector:
     matchLabels:
       {{- include "iap.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: "mongodb-query-exporter"
   podMetricsEndpoints:
   - port: metrics
     path: /metrics

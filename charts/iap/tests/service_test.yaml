@@ -12,8 +12,6 @@ tests:
         port: 80
       applicationPort: 8080
       useWebSockets: false
-      processExporter:
-        enabled: false
     asserts:
       - hasDocuments:
           count: 1
@@ -48,8 +46,6 @@ tests:
         port: 80
       applicationPort: 8080
       useWebSockets: false
-      processExporter:
-        enabled: false
     asserts:
       - equal:
           path: metadata.labels["app.kubernetes.io/component"]
@@ -82,8 +78,6 @@ tests:
         port: 80
       applicationPort: 8080
       useWebSockets: false
-      processExporter:
-        enabled: false
       nameOverride: "test-app"
     asserts:
       - isSubset:
@@ -100,8 +94,6 @@ tests:
         port: 443
       applicationPort: 8443
       useWebSockets: false
-      processExporter:
-        enabled: false
     asserts:
       - equal:
           path: spec.type
@@ -121,8 +113,6 @@ tests:
         port: 80
       applicationPort: 3000
       useWebSockets: false
-      processExporter:
-        enabled: false
     asserts:
       - equal:
           path: spec.type
@@ -142,8 +132,6 @@ tests:
         port: 9090
       applicationPort: 9000
       useWebSockets: false
-      processExporter:
-        enabled: false
     asserts:
       - equal:
           path: spec.ports[0].port
@@ -160,8 +148,6 @@ tests:
         port: 8080
       applicationPort: 8080
       useWebSockets: false
-      processExporter:
-        enabled: false
     asserts:
       - equal:
           path: spec.ports[0].port
@@ -178,8 +164,6 @@ tests:
         port: 80
       applicationPort: 80
       useWebSockets: false
-      processExporter:
-        enabled: false
     asserts:
       - equal:
           path: spec.ports[0].port
@@ -199,8 +183,6 @@ tests:
         port: 443
       applicationPort: 8443
       useWebSockets: false
-      processExporter:
-        enabled: false
     asserts:
       - equal:
           path: spec.ports[0].port
@@ -220,8 +202,6 @@ tests:
         port: 32000
       applicationPort: 31000
       useWebSockets: false
-      processExporter:
-        enabled: false
     asserts:
       - equal:
           path: spec.ports[0].port
@@ -238,8 +218,6 @@ tests:
         port: 80
       applicationPort: 8080
       useWebSockets: false
-      processExporter:
-        enabled: false
     asserts:
       - equal:
           path: spec.ports[0].protocol
@@ -253,8 +231,6 @@ tests:
         port: 9999
       applicationPort: 8888
       useWebSockets: false
-      processExporter:
-        enabled: false
     asserts:
       - equal:
           path: spec.ports[0].name
@@ -268,8 +244,6 @@ tests:
         port: 80
       applicationPort: 8080
       useWebSockets: false
-      processExporter:
-        enabled: false
     asserts:
       - equal:
           path: spec.type
@@ -283,8 +257,6 @@ tests:
         port: 80
       applicationPort: 8080
       useWebSockets: false
-      processExporter:
-        enabled: false
       fullnameOverride: "custom-app-name"
     asserts:
       - equal:
@@ -304,8 +276,6 @@ tests:
         port: 80
       applicationPort: 8080
       useWebSockets: false
-      processExporter:
-        enabled: false
       nameOverride: "custom-name"
     asserts:
       - equal:
@@ -320,8 +290,6 @@ tests:
         port: 80
       applicationPort: 8080
       useWebSockets: true
-      processExporter:
-        enabled: false
     asserts:
       - exists:
           path: spec.ports
@@ -345,8 +313,6 @@ tests:
         port: 80
       applicationPort: 8080
       useWebSockets: false
-      processExporter:
-        enabled: false
     asserts:
       - exists:
           path: spec.ports
@@ -370,8 +336,6 @@ tests:
         port: 80
       applicationPort: "http-port"
       useWebSockets: false
-      processExporter:
-        enabled: false
     asserts:
       - equal:
           path: spec.ports[0].targetPort
@@ -385,8 +349,6 @@ tests:
         port: 80
       applicationPort: 8080
       useWebSockets: false
-      processExporter:
-        enabled: false
     release:
       name: "my-custom-release"
     asserts:
@@ -406,8 +368,6 @@ tests:
         port: 80
       applicationPort: 8080
       useWebSockets: false
-      processExporter:
-        enabled: false
     asserts:
       - exists:
           path: metadata.annotations["itential.com/copyright"]
@@ -426,79 +386,39 @@ tests:
           foo: bar
       applicationPort: 8080
       useWebSockets: false
-      processExporter:
-        enabled: false
     asserts:
       - equal:
           path: metadata.annotations["foo"]
           value: bar
 
-  - it: should include process-metrics port when processExporter is enabled
+  - it: should handle websockets configuration
     set:
       service:
-        name: "process-exporter-service"
-        type: "ClusterIP"
-        port: 443
-      applicationPort: 3443
-      useWebSockets: false
-      processExporter:
-        enabled: true
-    asserts:
-      - lengthEqual:
-          path: spec.ports
-          count: 2
-      - equal:
-          path: spec.ports[1].name
-          value: "process-metrics"
-      - equal:
-          path: spec.ports[1].port
-          value: 9256
-      - equal:
-          path: spec.ports[1].targetPort
-          value: 9256
-      - equal:
-          path: spec.ports[1].protocol
-          value: "TCP"
-
-  - it: should not include process-metrics port when processExporter is disabled
-    set:
-      service:
-        name: "no-process-exporter-service"
-        type: "ClusterIP"
-        port: 443
-      applicationPort: 3443
-      useWebSockets: false
-      processExporter:
-        enabled: false
-    asserts:
-      - lengthEqual:
-          path: spec.ports
-          count: 1
-      - equal:
-          path: spec.ports[0].name
-          value: "http"
-
-  - it: should handle processExporter with websockets enabled
-    set:
-      service:
-        name: "process-exporter-ws-service"
+        name: "websocket-service"
         type: "ClusterIP"
         port: 443
       applicationPort: 3443
       useWebSockets: true
       websocketPort: 8080
-      processExporter:
-        enabled: true
     asserts:
       - lengthEqual:
           path: spec.ports
-          count: 3
+          count: 2
       - equal:
           path: spec.ports[0].name
           value: "http"
       - equal:
+          path: spec.ports[0].port
+          value: 443
+      - equal:
+          path: spec.ports[0].targetPort
+          value: 3443
+      - equal:
           path: spec.ports[1].name
           value: "ws"
       - equal:
-          path: spec.ports[2].name
-          value: "process-metrics"
+          path: spec.ports[1].port
+          value: 8080
+      - equal:
+          path: spec.ports[1].targetPort
+          value: 8080

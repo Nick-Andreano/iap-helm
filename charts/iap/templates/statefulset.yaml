@@ -140,20 +140,21 @@ spec:
           - name: "iap-assets-volume"
             mountPath: "/opt/itential/platform/services/custom"
           {{- end }}
-          {{- with .Values.volumeMounts }}
-          {{- toYaml . | nindent 10 }}
-          {{- end }}
-      {{- if .Values.processExporter.enabled }}
+        {{- with .Values.volumeMounts }}
+        {{- toYaml . | nindent 10 }}
+        {{- end }}
+      {{- if and .Values.processExporter .Values.processExporter.enabled }}
       - name: process-exporter
         args:
           - -config.path=/etc/process-exporter/process-exporter.conf
           - -children=false
           - -recheck-with-time-limit=30s
           - -threads=false
+          - -web.config.file=/etc/process-exporter/web-config.yaml
         image: "{{ .Values.processExporter.image.repository }}:{{ .Values.processExporter.image.tag }}"
         imagePullPolicy: Always
         ports:
-          - containerPort: 9256
+          - containerPort: {{ .Values.processExporter.port | default 9256 }}
             name: process-metrics
             protocol: TCP
         resources:
@@ -163,75 +164,23 @@ spec:
             cpu: 100m
             memory: 50Mi
         volumeMounts:
-          - mountPath: /etc/process-exporter
-            name: process-exporter      
+          - name: process-exporter
+            mountPath: /etc/process-exporter
+          - name: platform-cert-volume
+            mountPath: /etc/ssl/platform
+            readOnly: true
+      {{- end }}
       shareProcessNamespace: true
-      {{- end }}
-      {{- if and .Values.mongoqueryExporter .Values.mongoqueryExporter.enabled }}
-      - name: mongodb-query-exporter
-        args:
-          - --bind=:9412
-          - --path=/metrics
-        env:
-        - name: MDBEXPORTER_MONGODB_QUERY_TIMEOUT
-          value: 15s
-        envFrom:
-        - secretRef:
-            name: mongodb-query-exporter
-        image: ghcr.io/raffis/mongodb-query-exporter:v5.1.0
-        imagePullPolicy: Always
-        livenessProbe:
-          failureThreshold: 3
-          httpGet:
-            path: /healthz
-            port: metrics
-            scheme: HTTP
-          initialDelaySeconds: 10
-          periodSeconds: 10
-          successThreshold: 1
-          timeoutSeconds: 1
-        ports:
-        - containerPort: 9412
-          name: metrics
-          protocol: TCP
-        readinessProbe:
-          failureThreshold: 3
-          httpGet:
-            path: /healthz
-            port: metrics
-            scheme: HTTP
-          initialDelaySeconds: 10
-          periodSeconds: 10
-          successThreshold: 1
-          timeoutSeconds: 1
-        resources:
-          limits:
-            ephemeral-storage: 50Mi
-            memory: 250Mi
-          requests:
-            cpu: 50m
-            ephemeral-storage: 50Mi
-            memory: 250Mi
-        volumeMounts:
-        - mountPath: /etc/mongodb_query_exporter
-          name: config
-      {{- end }}
       volumes:
         {{- if .Values.useTLS }}
         - name: platform-cert-volume
           secret:
             secretName: {{ include "iap.fullname" . }}-tls-secret
         {{- end }}
-        {{- if .Values.processExporter.enabled }}
+        {{- if and .Values.processExporter .Values.processExporter.enabled }}
         - name: process-exporter
           configMap:
             name: iap-process-exporter
-        {{- end }}
-        {{- if and .Values.mongoqueryExporter .Values.mongoqueryExporter.enabled }}
-        - name: config
-          configMap:
-            defaultMode: 420
-            name: mongodb-query-exporter
         {{- end }}
       {{- with .Values.volumes }}
         {{- toYaml . | nindent 8 }}

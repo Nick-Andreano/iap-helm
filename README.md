@@ -185,6 +185,7 @@ understand.
 | processExporter.enabled | bool | `true` | Toggle to enable the process exporter sidecar container |
 | processExporter.image.repository | string | `"ncabatoff/process-exporter"` | The process exporter image repository |
 | processExporter.image.tag | string | `"latest"` | The process exporter image tag |
+| processExporter.port | int | `9256` | Process exporter metrics port |
 | replicaCount | int | `2` | The number of pods to start |
 | securityContext | object | `{}` | Additional security context |
 | service.name | string | `"iap-service"` | The name of this Kubernetes service object. |
