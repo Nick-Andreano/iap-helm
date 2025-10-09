@@ -209,14 +209,14 @@ resources:
 
 # The liveness probe used to determine if the container is alive. If the liveness probe fails,
 # the kubelet kills the container, and the container is subjected to its restart policy. If a
-# container does not provide a liveness probe, the default state is Success.
+# container does not provide a liveness probe, the default state is Success. This is an exec cmd
+# directly against the container checking for the core processes that IAP needs running.
 livenessProbe:
   enabled: false
-  periodSeconds: 10
+  periodSeconds: 60
   timeoutSeconds: 5
-  failureThreshold: 3
+  failureThreshold: 10
   successThreshold: 1
-  path: "/health/status"
 
 # The readiness probe used to determine if the container is ready to accept requests. If the
 # readiness probe fails, the endpoints controller removes the pod’s IP address from the
@@ -225,11 +225,11 @@ livenessProbe:
 # state is success.
 readinessProbe:
   enabled: false
-  periodSeconds: 10
+  periodSeconds: 30
   timeoutSeconds: 5
-  failureThreshold: 3
+  failureThreshold: 20
   successThreshold: 1
-  path: "/health/status"
+  path: "/health/status?exclude-services=true"
 
 # The startup probe used to allow some time for the application to start up. The application
 # will have a maximum of 3 minutes (18 * 10 = 180s) to finish its startup. Once the startup
@@ -239,7 +239,7 @@ startupProbe:
   initialDelaySeconds: 10
   periodSeconds: 10
   timeoutSeconds: 5
-  failureThreshold: 18
+  failureThreshold: 30
   successThreshold: 1
   path: "/health/status?exclude-services=true"
 
@@ -308,7 +308,7 @@ env:
   # ITENTIAL_SERVICE_BLACKLIST : ""
 
   # The amount of time a service should wait before shutting down, in seconds.
-  # ITENTIAL_PLATFORM_SHUTDOWN_TIMEOUT: "3"
+  # ITENTIAL_PLATFORM_SHUTDOWN_TIMEOUT: ""
 
   # How often to update service health, measured in seconds.
   # ITENTIAL_SERVICE_HEALTH_CHECK_INTERVAL : "5"

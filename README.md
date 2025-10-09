@@ -1,6 +1,7 @@
 # Helm chart for Itential Automation Platform
 
-This repo contains helm charts for running Itential Automation Platform in Kubernetes.
+This repo contains helm charts for running Itential Automation Platform in Kubernetes. Requires 
+Helm version `v3.15.0`.
 
 ## Itential Automation Platform (IAP)
 

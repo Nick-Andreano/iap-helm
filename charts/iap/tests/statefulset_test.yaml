@@ -324,15 +324,8 @@ tests:
         successThreshold: 1
         timeoutSeconds: 10
     asserts:
-      - equal:
-          path: spec.template.spec.containers[0].livenessProbe.httpGet.path
-          value: "/health/live"
-      - equal:
-          path: spec.template.spec.containers[0].livenessProbe.httpGet.port
-          value: 8080
-      - equal:
-          path: spec.template.spec.containers[0].livenessProbe.failureThreshold
-          value: 5
+      - exists:
+          path: spec.template.spec.containers[0].livenessProbe.exec.command
 
   - it: should configure readiness probe when enabled
     set:
