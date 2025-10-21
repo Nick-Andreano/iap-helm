@@ -1,0 +1,260 @@
+{{- if .Values.redisProxy.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "iap.fullname" . }}-redis-proxy
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "iap.labels" . | nindent 4 }}
+  annotations:
+    {{- include "iap.annotations" . | nindent 4 }}
+data:
+  redis-proxy.py: |
+    #!/usr/bin/env python3
+    """
+    Redis IAM Authentication Proxy for ElastiCache
+    Listens on localhost and forwards Redis commands with IAM authentication
+    """
+
+    import socket
+    import threading
+    import time
+    import subprocess
+    import json
+    import logging
+    import sys
+    from datetime import datetime, timedelta
+
+    # Configure logging
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+    logger = logging.getLogger(__name__)
+
+    class RedisIAMProxy:
+        def __init__(self):
+            self.proxy_host = '127.0.0.1'
+            self.proxy_port = 6380
+            self.redis_host = '{{ .Values.redisProxy.elasticacheHost }}'
+            self.redis_port = {{ .Values.redisProxy.elasticachePort }}
+            self.redis_user = '{{ .Values.redisProxy.elasticacheUser | default "IAP-ElastiCache-Role" }}'
+            self.replication_group_id = '{{ .Values.redisProxy.replicationGroupId | default "petlab-eks-elasticache-iam-role-auth" }}'
+            self.auth_token = None
+            self.token_expiry = None
+            self.token_refresh_interval = 600  # 10 minutes
+            
+        def generate_auth_token(self):
+            """Generate IAM auth token using ElastiCache-specific presigned URL"""
+            try:
+                logger.info("Generating ElastiCache IAM auth token using presigned URL...")
+                
+                import boto3
+                from botocore.signers import RequestSigner
+                from botocore.exceptions import ClientError, NoCredentialsError
+                from botocore import model
+                from datetime import datetime
+                from urllib.parse import urlparse
+                
+                # Get AWS credentials from the IAM role
+                session = boto3.Session()
+                credentials = session.get_credentials()
+                
+                if not credentials:
+                    logger.error("No AWS credentials available")
+                    return False
+                
+                # Set up ElastiCache presigned URL parameters
+                region = "us-east-1"
+                service = "elasticache"
+                expires_in = 900  # 15 minutes
+                
+                # Create request parameters for ElastiCache IAM auth using actual endpoint
+                request_params = {
+                    "method": "GET", 
+                    "url": f"http://{self.redis_host}",
+                    "body": {
+                        "Action": "connect",
+                        "User": self.redis_user
+                    },
+                    "headers": {},
+                    "context": {}
+                }
+                
+                # Create RequestSigner for ElastiCache service
+                signer = RequestSigner(
+                    model.ServiceId(service),
+                    region,
+                    service,
+                    "v4",
+                    credentials,
+                    session.events
+                )
+                
+                # Generate presigned URL (this is our IAM auth token)
+                signed_url = signer.generate_presigned_url(
+                    request_params,
+                    region_name=region,
+                    expires_in=expires_in,
+                    operation_name=service
+                )
+                
+                logger.info(f"Complete presigned URL: {signed_url}")
+                
+                # Extract the credential part (remove http:// prefix as per AWS docs)
+                if signed_url.startswith('http://'):
+                    self.auth_token = signed_url[7:]
+                    logger.info("Using presigned URL (minus http://) as auth token")
+                    logger.info(f"Complete auth token: {self.auth_token}")
+                else:
+                    self.auth_token = signed_url
+                    logger.info(f"Complete auth token: {self.auth_token}")
+                
+                self.token_expiry = datetime.now() + timedelta(minutes=14)  # Refresh 1 min before expiry
+                logger.info(f"Successfully generated ElastiCache IAM auth token, expires at {self.token_expiry}")
+                return True
+                
+            except NoCredentialsError:
+                logger.error("AWS credentials not found. Ensure IAM role is properly configured.")
+                return False
+            except ClientError as e:
+                logger.error(f"AWS client error generating auth token: {e}")
+                return False
+            except Exception as e:
+                logger.error(f"Exception generating auth token: {e}")
+                return False
+        
+        def token_refresh_worker(self):
+            """Background worker to refresh auth tokens"""
+            while True:
+                try:
+                    if not self.auth_token or datetime.now() >= self.token_expiry:
+                        self.generate_auth_token()
+                    
+                    time.sleep(self.token_refresh_interval)
+                    
+                except Exception as e:
+                    logger.error(f"Token refresh worker error: {e}")
+                    time.sleep(60)  # Wait 1 minute on error
+        
+        def create_redis_connection(self):
+            """Create authenticated connection to ElastiCache"""
+            try:
+                import ssl
+                
+                # Create TLS context
+                context = ssl.create_default_context()
+                context.check_hostname = False
+                context.verify_mode = ssl.CERT_NONE
+                
+                # Create socket and wrap with TLS
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                tls_sock = context.wrap_socket(sock, server_hostname=self.redis_host)
+                tls_sock.connect((self.redis_host, self.redis_port))
+                
+                # Authenticate using AUTH command with username
+                if self.auth_token:
+                    auth_cmd = f"AUTH {self.redis_user} {self.auth_token}\r\n"
+                    tls_sock.sendall(auth_cmd.encode('utf-8'))
+                    response = tls_sock.recv(1024).decode('utf-8')
+                    
+                    if "+OK" not in response:
+                        logger.error(f"Authentication failed: {response}")
+                        tls_sock.close()
+                        return None
+                    else:
+                        logger.info("Successfully authenticated to ElastiCache")
+                
+                return tls_sock
+                
+            except Exception as e:
+                logger.error(f"Failed to connect to ElastiCache: {e}")
+                return None
+        
+        def handle_client(self, client_socket):
+            """Handle client connection and proxy to ElastiCache"""
+            redis_conn = None
+            
+            try:
+                # Create connection to ElastiCache
+                redis_conn = self.create_redis_connection()
+                if not redis_conn:
+                    client_socket.close()
+                    return
+                
+                logger.info("Client connected, proxying to ElastiCache")
+                
+                # Start forwarding data in both directions
+                def forward_data(src, dst, direction):
+                    try:
+                        while True:
+                            data = src.recv(4096)
+                            if not data:
+                                break
+                            dst.sendall(data)
+                            logger.debug(f"Forwarded {len(data)} bytes {direction}")
+                    except Exception as e:
+                        logger.debug(f"Forward {direction} ended: {e}")
+                
+                # Start threads for bidirectional forwarding
+                client_to_redis = threading.Thread(
+                    target=forward_data, 
+                    args=(client_socket, redis_conn, "client->redis")
+                )
+                redis_to_client = threading.Thread(
+                    target=forward_data, 
+                    args=(redis_conn, client_socket, "redis->client")
+                )
+                
+                client_to_redis.start()
+                redis_to_client.start()
+                
+                # Wait for threads to complete
+                client_to_redis.join()
+                redis_to_client.join()
+                
+            except Exception as e:
+                logger.error(f"Error handling client: {e}")
+            finally:
+                if redis_conn:
+                    redis_conn.close()
+                client_socket.close()
+                logger.info("Client connection closed")
+        
+        def start_proxy(self):
+            """Start the Redis proxy server"""
+            # Start token refresh worker
+            token_thread = threading.Thread(target=self.token_refresh_worker, daemon=True)
+            token_thread.start()
+            
+            # Generate initial token
+            if not self.generate_auth_token():
+                logger.error("Failed to generate initial auth token")
+                sys.exit(1)
+            
+            # Start proxy server
+            server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            
+            try:
+                server_socket.bind((self.proxy_host, self.proxy_port))
+                server_socket.listen(10)
+                logger.info(f"Redis IAM Proxy listening on {self.proxy_host}:{self.proxy_port}")
+                
+                while True:
+                    client_socket, address = server_socket.accept()
+                    logger.info(f"New client connection from {address}")
+                    
+                    # Handle each client in a separate thread
+                    client_thread = threading.Thread(
+                        target=self.handle_client, 
+                        args=(client_socket,)
+                    )
+                    client_thread.start()
+                    
+            except Exception as e:
+                logger.error(f"Proxy server error: {e}")
+            finally:
+                server_socket.close()
+
+    if __name__ == "__main__":
+        proxy = RedisIAMProxy()
+        proxy.start_proxy()
+{{- end }}

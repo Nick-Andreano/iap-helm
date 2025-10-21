@@ -51,7 +51,23 @@ image:
 imagePullSecrets: []
 
 serviceAccount:
-  name:
+  # -- Enable creation of ServiceAccount
+  enabled: false
+  # -- Create a new ServiceAccount or use existing one
+  create: true
+  # -- Name of the ServiceAccount to use (auto-generated if not specified)
+  name: ""
+  # -- Additional annotations for the ServiceAccount
+  annotations: {}
+  # -- Whether to automount the ServiceAccount token
+  automountServiceAccountToken: true
+  
+  # AWS IAM Role configurations
+  aws:
+    # ElastiCache IAM configuration
+    elasticache:
+      # -- IAM Role ARN for ElastiCache access
+      roleArn: ""
 
 # The issuer to be used if using cert-manager to generate the TLS certificates
 issuer:
@@ -653,4 +669,22 @@ env:
   #
   # END IAP CONFIGURATION PROPERTIES
   #
+
+# Redis IAM Authentication Proxy Configuration
+# Enables dynamic IAM token generation for ElastiCache without static passwords
+redisProxy:
+  # -- Enable Redis IAM authentication proxy sidecar
+  enabled: false
+  # -- Redis proxy container image
+  image: python:3.11-alpine
+  # -- Image pull policy
+  pullPolicy: IfNotPresent
+  # -- ElastiCache user name for IAM authentication (must match ElastiCache User ID)
+  elasticacheUser: ""
+  # -- ElastiCache replication group ID
+  replicationGroupId: ""
+  # -- ElastiCache hostname that proxy should connect to
+  elasticacheHost: ""
+  # -- ElastiCache port that proxy should connect to
+  elasticachePort: 6379
 

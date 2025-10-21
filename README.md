@@ -34,6 +34,70 @@ helm install iap . -f values.yaml --set image.tag=6.0.4
 | https://charts.jetstack.io | cert-manager | 1.12.3 |
 | https://kubernetes-sigs.github.io/external-dns/ | external-dns | 1.17.0 |
 
+### AWS IAM Authentication
+
+The chart supports AWS IAM-based authentication for ElastiCache through Kubernetes ServiceAccounts with IAM role annotations.
+
+#### ElastiCache IAM Authentication with Redis Proxy
+
+The chart includes a Redis IAM authentication proxy sidecar that provides dynamic IAM token generation for secure ElastiCache connections without managing static passwords.
+
+**Features:**
+- **Dynamic IAM Tokens**: Automatically generates and refreshes ElastiCache IAM authentication tokens every 15 minutes
+- **Zero Static Passwords**: Eliminates need for hardcoded Redis passwords in secrets
+- **IRSA Integration**: Uses Kubernetes ServiceAccounts with IAM role annotations
+- **Transparent Proxy**: IAP connects to localhost proxy, which handles IAM authentication to ElastiCache
+
+**Setup Requirements:**
+
+1. **AWS IAM Role** with ElastiCache permissions:
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": ["elasticache:Connect"],
+      "Resource": [
+        "arn:aws:elasticache:*:*:replicationgroup/*",
+        "arn:aws:elasticache:*:*:user/*"
+      ]
+    }
+  ]
+}
+```
+
+2. **ElastiCache User** with IAM authentication mode and User ID matching your IAM role name (converted to lowercase)
+
+3. **Configuration** in values.yaml:
+```yaml
+serviceAccount:
+  enabled: true
+  create: true
+  aws:
+    elasticache:
+      roleArn: "arn:aws:iam::ACCOUNT:role/ROLE_NAME"
+
+redisProxy:
+  enabled: true
+  elasticacheUser: "iam-role-name"  # Must match ElastiCache User ID
+  elasticacheHost: "master.your-cluster.cache.amazonaws.com"
+  elasticachePort: 6379
+  replicationGroupId: "your-cluster-name"
+
+env:
+  ITENTIAL_REDIS_HOST: "127.0.0.1"     # Connect through proxy
+  ITENTIAL_REDIS_PORT: "6380"          # Proxy port  
+  ITENTIAL_REDIS_PASSWORD: "placeholder" # Proxy handles auth
+  ITENTIAL_REDIS_TLS: "{}"              # No TLS for localhost
+```
+
+**ElastiCache Requirements:**
+- Redis OSS version 7.0+ with IAM authentication enabled
+- Encryption in transit enabled (required for IAM auth)
+- ElastiCache user with authentication mode set to "IAM"
+- Security group allowing access from EKS cluster
+
 #### Secrets
 
 The chart assumes the following secrets, they are not included in the Chart.
@@ -188,8 +252,19 @@ understand.
 | processExporter.image.repository | string | `"ncabatoff/process-exporter"` | The process exporter image repository |
 | processExporter.image.tag | string | `"latest"` | The process exporter image tag |
 | processExporter.port | int | `9256` | Process exporter metrics port |
+| redisProxy.elasticacheHost | string | `""` | ElastiCache hostname that proxy should connect to |
+| redisProxy.elasticachePort | int | `6379` | ElastiCache port that proxy should connect to |
+| redisProxy.elasticacheUser | string | `""` | ElastiCache user name for IAM authentication (must match ElastiCache User ID) |
+| redisProxy.enabled | bool | `false` | Enable Redis IAM authentication proxy sidecar |
+| redisProxy.image | string | `"python:3.11-alpine"` | Redis proxy container image |
+| redisProxy.pullPolicy | string | `"IfNotPresent"` | Image pull policy |
+| redisProxy.replicationGroupId | string | `""` | ElastiCache replication group ID |
 | replicaCount | int | `2` | The number of pods to start |
 | securityContext | object | `{}` | Additional security context |
+| serviceAccount.aws.elasticache.roleArn | string | `""` | IAM Role ARN for ElastiCache access |
+| serviceAccount.enabled | bool | `false` | Enable creation of ServiceAccount |
+| serviceAccount.create | bool | `true` | Create a new ServiceAccount or use existing one |
+| serviceAccount.name | string | `""` | Name of the ServiceAccount to use (auto-generated if not specified) |
 | service.name | string | `"iap-service"` | The name of this Kubernetes service object. |
 | service.port | int | `443` | The port that this service object is listening on. |
 | service.type | string | `"ClusterIP"` | The service type. |

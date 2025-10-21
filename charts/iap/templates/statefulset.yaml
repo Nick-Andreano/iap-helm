@@ -38,7 +38,11 @@ spec:
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- if .Values.serviceAccount.enabled }}
+      serviceAccountName: {{ include "iap.serviceAccountName" . }}
+      {{- else }}
       serviceAccountName: ""
+      {{- end }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
       containers:
@@ -129,8 +133,8 @@ spec:
             value: {{ $value | quote }}
           {{- end }}
         envFrom:
-        - secretRef:
-            name: itential-platform-secrets
+          - secretRef:
+              name: itential-platform-secrets
         volumeMounts:
           {{- if .Values.useTLS }}
           - name: platform-cert-volume
@@ -138,12 +142,10 @@ spec:
             readOnly: true
           {{- end }}
           {{- if .Values.mountLogVolume }}
-          # Uses a persistent volume claim to mount a directory to write IAP log files to
           - name: "{{ include "iap.fullname" . }}-logs-volume"
             mountPath: "/var/log/itential"
           {{- end }}
           {{- if .Values.mountAdapterVolume }}
-          # Uses a persistent volume claim to mount a directory that includes adapters and apps
           - name: "{{ include "iap.fullname" . }}-assets-volume"
             mountPath: "/opt/itential/platform/services/custom"
           {{- end }}
@@ -176,6 +178,40 @@ spec:
           - name: platform-cert-volume
             mountPath: /etc/ssl/platform
             readOnly: true
+      {{- end }}
+      {{- if .Values.redisProxy.enabled }}
+      - name: redis-iam-proxy
+        image: "{{ .Values.redisProxy.image }}"
+        imagePullPolicy: {{ .Values.redisProxy.pullPolicy | default "IfNotPresent" }}
+        command: ["/bin/sh"]
+        args:
+          - -c
+          - |
+            export PYTHONUSERBASE=/tmp/python-packages
+            mkdir -p /tmp/python-packages
+            pip install --user boto3 awscli
+            export PATH=$PATH:/tmp/python-packages/bin
+            cp /config/redis-proxy.py /tmp/redis-proxy.py
+            python3 /tmp/redis-proxy.py
+        ports:
+          - name: redis-proxy
+            containerPort: 6380
+            protocol: TCP
+        env:
+          - name: AWS_DEFAULT_REGION
+            value: us-east-1
+        volumeMounts:
+          - name: redis-proxy-config
+            mountPath: /config
+        resources:
+          limits:
+            cpu: 200m
+            memory: 256Mi
+          requests:
+            cpu: 100m
+            memory: 128Mi
+      {{- end }}
+      {{- if and .Values.processExporter .Values.processExporter.enabled }}
       shareProcessNamespace: true
       {{- end }}
       volumes:
@@ -188,6 +224,11 @@ spec:
         - name: process-exporter
           configMap:
             name: {{ include "iap.fullname" . }}-process-exporter
+        {{- end }}
+        {{- if .Values.redisProxy.enabled }}
+        - name: redis-proxy-config
+          configMap:
+            name: {{ include "iap.fullname" . }}-redis-proxy
         {{- end }}
       {{- with .Values.volumes }}
         {{- toYaml . | nindent 8 }}
