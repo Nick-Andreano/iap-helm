@@ -282,7 +282,6 @@ livenessProbe:
   timeoutSeconds: 10
   failureThreshold: 3
   successThreshold: 1
-  path: "/health/status?exclude-services=true"
 
 # The readiness probe used to determine if the container is ready to accept requests. If the
 # readiness probe fails, the endpoints controller removes the pod’s IP address from the
