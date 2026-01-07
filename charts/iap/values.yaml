@@ -276,11 +276,13 @@ resources:
 # container does not provide a liveness probe, the default state is Success. This is an exec cmd
 # directly against the container checking for the core processes that IAP needs running.
 livenessProbe:
-  enabled: false
-  periodSeconds: 60
-  timeoutSeconds: 5
-  failureThreshold: 10
+  enabled: true
+  initialDelaySeconds: 90
+  periodSeconds: 30
+  timeoutSeconds: 10
+  failureThreshold: 3
   successThreshold: 1
+  path: "/health/status?exclude-services=true"
 
 # The readiness probe used to determine if the container is ready to accept requests. If the
 # readiness probe fails, the endpoints controller removes the pod’s IP address from the
@@ -288,22 +290,22 @@ livenessProbe:
 # initial delay is failure. If a container does not provide a readiness probe, the default
 # state is success.
 readinessProbe:
-  enabled: false
+  enabled: true
+  initialDelaySeconds: 90
   periodSeconds: 30
-  timeoutSeconds: 5
-  failureThreshold: 20
+  timeoutSeconds: 10
+  failureThreshold: 3
   successThreshold: 1
   path: "/health/status?exclude-services=true"
 
-# The startup probe used to allow some time for the application to start up. The application
-# will have a maximum of 3 minutes (18 * 10 = 180s) to finish its startup. Once the startup
+# The startup probe used to allow some time for the application to start up. Once the startup
 # probe has succeeded once, the liveness probe takes over.
 startupProbe:
-  enabled: false
-  initialDelaySeconds: 10
-  periodSeconds: 10
-  timeoutSeconds: 5
-  failureThreshold: 30
+  enabled: true
+  initialDelaySeconds: 90
+  periodSeconds: 30
+  timeoutSeconds: 10
+  failureThreshold: 3
   successThreshold: 1
   path: "/health/status?exclude-services=true"
 
