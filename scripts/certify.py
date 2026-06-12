@@ -25,8 +25,8 @@ Output:
 import argparse
 import getpass
 import json
-import ssl
 import shutil
+import ssl
 import subprocess
 import sys
 import urllib.parse
@@ -37,6 +37,9 @@ from datetime import datetime, timezone
 _DEFAULT_USER = "admin"
 _DEFAULT_PASS = "admin"
 
+# Underscore-delimited tokens that indicate a config value should be redacted.
+# Matching is done on whole tokens (split by "_") to avoid false positives like
+# "bypass" matching "pass".
 _SENSITIVE_KEYS = frozenset({
     "password", "passwd", "secret", "token", "credential", "apikey", "privatekey",
 })
@@ -45,6 +48,11 @@ _SENSITIVE_KEYS = frozenset({
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
 def _parse_args():
+    """
+    Parse and return command-line arguments.
+    argparse handles validation and exits with a usage message on bad input,
+    so no additional error handling is needed here.
+    """
     p = argparse.ArgumentParser(
         description="Collect IAP health data and produce a markdown certification report.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -79,16 +87,48 @@ def _parse_args():
 
 
 def _hostname(url):
-    """Extract the bare hostname from a URL, stripping protocol and port."""
-    return urllib.parse.urlparse(url).hostname or url
+    """
+    Extract the bare hostname from a URL, stripping protocol and port.
+    Falls back to the raw url string if urlparse cannot identify a hostname
+    (e.g. if the user passed a bare IP without a scheme).
+    """
+    try:
+        hostname = urllib.parse.urlparse(url).hostname
+        return hostname if hostname else url
+    except Exception:
+        return url
 
 
 # ── HTTP / Auth ───────────────────────────────────────────────────────────────
 
 def _ssl_ctx(ca_cert=None):
+    """
+    Build an SSL context for HTTPS connections.
+
+    When ca_cert is provided the server certificate is verified against that CA,
+    which is the secure option for known deployments.  When omitted, verification
+    is disabled — necessary for self-signed IAP certs that are common in customer
+    environments.  Exits immediately with a clear message if the CA file cannot
+    be loaded rather than proceeding with a broken context.
+    """
     ctx = ssl.create_default_context()
     if ca_cert:
-        ctx.load_verify_locations(cafile=ca_cert)
+        try:
+            ctx.load_verify_locations(cafile=ca_cert)
+        except FileNotFoundError:
+            sys.exit(
+                f"CA certificate file not found: '{ca_cert}'\n"
+                "Check the path and try again."
+            )
+        except ssl.SSLError as exc:
+            sys.exit(
+                f"Failed to load CA certificate '{ca_cert}': {exc}\n"
+                "Ensure the file is a valid PEM-encoded certificate."
+            )
+        except OSError as exc:
+            sys.exit(
+                f"Cannot read CA certificate '{ca_cert}': {exc}"
+            )
     else:
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
@@ -96,9 +136,25 @@ def _ssl_ctx(ca_cert=None):
 
 
 def _login(base, username, password, ctx):
-    """Authenticate to IAP. Returns the session token string, or None on failure."""
-    url = base.rstrip("/") + "/login"
-    payload = json.dumps({"user": {"username": username, "password": password}}).encode()
+    """
+    Authenticate to IAP and return the session token string.
+
+    POSTs credentials to /login and extracts the token from either the JSON
+    response body or the Set-Cookie response headers.  Multiple Set-Cookie
+    headers are checked because ALB and other load-balancers inject their own
+    cookies before IAP's token cookie, which means checking only the first
+    header misses the token.
+
+    Returns None on any failure — the caller is responsible for deciding how to
+    handle a missing token (prompt, retry, report failure).
+    """
+    url = f"{base.rstrip('/')}/login"
+    try:
+        payload = json.dumps({"user": {"username": username, "password": password}}).encode()
+    except (TypeError, ValueError) as exc:
+        print(f"    [login] Failed to build request payload: {exc}", file=sys.stderr)
+        return None
+
     req = urllib.request.Request(
         url, method="POST", data=payload,
         headers={"Content-Type": "application/json"},
@@ -106,113 +162,226 @@ def _login(base, username, password, ctx):
     try:
         with urllib.request.urlopen(req, context=ctx, timeout=30) as resp:
             if resp.status != 200:
+                print(
+                    f"    [login] Server returned HTTP {resp.status} for POST {url} — "
+                    "credentials may be wrong or the login endpoint is unavailable.",
+                    file=sys.stderr,
+                )
                 return None
+
             body = resp.read().decode("utf-8", errors="replace")
+
+            # Attempt 1: token in JSON body
             try:
                 token = json.loads(body).get("token")
                 if token:
                     return token
             except (json.JSONDecodeError, AttributeError):
                 pass
-            # Check all Set-Cookie headers — ALB and other proxies inject their own
-            # cookies before IAP's token cookie, so getheader() alone misses it
+
+            # Attempt 2: scan every Set-Cookie header (ALB/proxies add extra ones
+            # before IAP's token cookie, so getheader() alone is not sufficient)
             for cookie_header in (resp.headers.get_all("Set-Cookie") or []):
                 for part in cookie_header.split(";"):
                     part = part.strip()
                     if part.lower().startswith("token="):
                         return part.split("=", 1)[1]
-    except (urllib.error.HTTPError, urllib.error.URLError, ssl.SSLError, OSError):
-        pass
+
+            print(
+                f"    [login] POST {url} returned HTTP 200 but no token was found "
+                "in the response body or Set-Cookie headers.  The IAP instance may "
+                "use a non-standard authentication flow.",
+                file=sys.stderr,
+            )
+            return None
+
+    except urllib.error.HTTPError as exc:
+        print(
+            f"    [login] HTTP {exc.code} from POST {url} — "
+            f"{exc.reason or 'no detail available'}.",
+            file=sys.stderr,
+        )
+    except urllib.error.URLError as exc:
+        print(
+            f"    [login] Cannot reach {url}: {exc.reason}  "
+            "Check that the host is correct and the IAP service is running.",
+            file=sys.stderr,
+        )
+    except ssl.SSLError as exc:
+        print(
+            f"    [login] TLS error connecting to {url}: {exc}  "
+            "Use --ca-cert if the server uses a private CA.",
+            file=sys.stderr,
+        )
+    except OSError as exc:
+        print(
+            f"    [login] Network error on POST {url}: {exc}",
+            file=sys.stderr,
+        )
     return None
 
 
 def _get(base, path, token, ctx):
     """
-    Authenticated GET against an IAP endpoint.
-    Returns parsed JSON on success, or a dict with '_error' on failure.
+    Perform an authenticated GET request against an IAP endpoint.
+
+    Sends the session token as a cookie.  Returns the parsed JSON response on
+    success.  On any failure returns a dict containing '_error' with a
+    description that includes the URL and failure reason so it can be rendered
+    into the report instead of crashing the script.
     """
-    url = base.rstrip("/") + path
+    url = f"{base.rstrip('/')}{path}"
     req = urllib.request.Request(url, headers={"Cookie": f"token={token}"})
     try:
         with urllib.request.urlopen(req, context=ctx, timeout=30) as resp:
             body = resp.read().decode("utf-8", errors="replace")
             if resp.status != 200:
-                return {"_error": f"HTTP {resp.status}"}
+                return {"_error": f"HTTP {resp.status} from GET {url}"}
             try:
                 return json.loads(body)
-            except json.JSONDecodeError:
-                return {"_raw": body}
+            except json.JSONDecodeError as exc:
+                return {
+                    "_error": f"Invalid JSON from GET {url}: {exc}",
+                    "_raw": body[:200],
+                }
     except urllib.error.HTTPError as exc:
-        return {"_error": f"HTTP {exc.code}"}
-    except (urllib.error.URLError, ssl.SSLError, OSError) as exc:
-        return {"_error": str(exc)}
+        return {"_error": f"HTTP {exc.code} from GET {url} — {exc.reason or 'no detail'}"}
+    except urllib.error.URLError as exc:
+        return {"_error": f"Cannot reach {url}: {exc.reason}"}
+    except ssl.SSLError as exc:
+        return {"_error": f"TLS error on GET {url}: {exc}"}
+    except OSError as exc:
+        return {"_error": f"Network error on GET {url}: {exc}"}
 
 
 # ── Formatters ────────────────────────────────────────────────────────────────
 
 def _fmt_bytes(n):
-    if not isinstance(n, (int, float)):
+    """
+    Format a byte count as a human-readable string (e.g. 189.7 MB).
+    Returns '—' for any non-numeric input rather than raising.
+    """
+    try:
+        if not isinstance(n, (int, float)):
+            return "—"
+        for unit in ("B", "KB", "MB", "GB"):
+            if abs(n) < 1024:
+                return f"{n:.1f} {unit}"
+            n /= 1024
+        return f"{n:.1f} TB"
+    except Exception:
         return "—"
-    for unit in ("B", "KB", "MB", "GB"):
-        if abs(n) < 1024:
-            return f"{n:.1f} {unit}"
-        n /= 1024
-    return f"{n:.1f} TB"
 
 
 def _fmt_uptime(sec):
-    if not isinstance(sec, (int, float)) or sec <= 0:
+    """
+    Format a seconds value as a human-readable uptime string (e.g. '4h 12m').
+    Returns '—' for zero, negative, or non-numeric input rather than raising.
+    """
+    try:
+        if not isinstance(sec, (int, float)) or sec <= 0:
+            return "—"
+        h, rem = divmod(int(sec), 3600)
+        m, s = divmod(rem, 60)
+        if h:
+            return f"{h}h {m}m"
+        if m:
+            return f"{m}m {s}s"
+        return f"{s}s"
+    except Exception:
         return "—"
-    h, rem = divmod(int(sec), 3600)
-    m, s = divmod(rem, 60)
-    if h:
-        return f"{h}h {m}m"
-    if m:
-        return f"{m}m {s}s"
-    return f"{s}s"
 
 
 def _fmt_ts(ms):
-    if not isinstance(ms, (int, float)):
-        return "—"
+    """
+    Convert a Unix timestamp in milliseconds to a UTC datetime string.
+    Returns '—' for any non-numeric or out-of-range input rather than raising.
+    """
     try:
-        return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        if not isinstance(ms, (int, float)):
+            return "—"
+        return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).strftime(
+            "%Y-%m-%d %H:%M:%S UTC"
+        )
     except (OSError, OverflowError, ValueError):
         return str(ms)
+    except Exception:
+        return "—"
 
 
 def _redact(obj, _depth=0):
-    """Recursively replace values whose key matches a sensitive pattern with [REDACTED]."""
-    if _depth > 15:
+    """
+    Recursively walk a JSON-decoded structure and replace values whose key
+    contains a sensitive token (matched on whole underscore-delimited parts)
+    with the string '[REDACTED]'.  The depth limit prevents runaway recursion
+    on pathologically nested structures returned by some endpoints.
+    """
+    try:
+        if _depth > 15:
+            return obj
+        if isinstance(obj, dict):
+            return {
+                k: "[REDACTED]" if any(s in k.lower() for s in _SENSITIVE_KEYS)
+                else _redact(v, _depth + 1)
+                for k, v in obj.items()
+            }
+        if isinstance(obj, list):
+            return [_redact(i, _depth + 1) for i in obj]
         return obj
-    if isinstance(obj, dict):
-        return {
-            k: "[REDACTED]" if any(s in k.lower() for s in _SENSITIVE_KEYS) else _redact(v, _depth + 1)
-            for k, v in obj.items()
-        }
-    if isinstance(obj, list):
-        return [_redact(i, _depth + 1) for i in obj]
-    return obj
+    except Exception:
+        return obj
 
 
 # ── Markdown helpers ──────────────────────────────────────────────────────────
 
 def _table(headers, rows):
-    """Build a GFM-compatible markdown table string."""
-    ncols = len(headers)
-    lines = [
-        "| " + " | ".join(str(h) for h in headers) + " |",
-        "|" + "|".join("---" for _ in range(ncols)) + "|",
-    ]
-    for row in rows:
-        cells = [str(c).replace("|", "\\|") for c in list(row)[:ncols]]
-        lines.append("| " + " | ".join(cells) + " |")
-    return "\n".join(lines)
+    """
+    Build a GitHub-Flavored Markdown table string from a list of headers and rows.
+    Pipe characters inside cell content are escaped so they do not break the table.
+    Rows with fewer cells than headers are padded; extra cells are silently dropped.
+    """
+    try:
+        ncols = len(headers)
+        lines = [
+            "| " + " | ".join(str(h) for h in headers) + " |",
+            "|" + "|".join("---" for _ in range(ncols)) + "|",
+        ]
+        for row in rows:
+            cells = [str(c).replace("|", "\\|") for c in list(row)[:ncols]]
+            while len(cells) < ncols:
+                cells.append("—")
+            lines.append("| " + " | ".join(cells) + " |")
+        return "\n".join(lines)
+    except Exception as exc:
+        return f"_Table render error: {exc}_"
+
+
+def _safe_render(name, func, data):
+    """
+    Call a render function and catch any exception it raises.
+    Returns an error blockquote instead of crashing the script if the data
+    returned by an API endpoint has an unexpected shape.
+    """
+    try:
+        return func(data)
+    except Exception as exc:
+        return (
+            f"> **Render error in '{name}':** `{exc}`  \n"
+            f"> The raw data shape was unexpected. "
+            f"Data type received: `{type(data).__name__}`.\n\n"
+        )
 
 
 # ── Section renderers ─────────────────────────────────────────────────────────
 
 def _render_health_status(d):
+    """
+    Render the /health/status response as a markdown field/value table.
+    The services array (Redis, MongoDB, Vault, etc.) is expanded into individual
+    rows so their status is immediately visible without reading raw JSON.
+    """
+    if not isinstance(d, dict):
+        return f"> **Unexpected response shape:** received `{type(d).__name__}`, expected dict.\n\n"
     if "_error" in d:
         return f"> **Error:** {d['_error']}\n\n"
     rows = [
@@ -222,13 +391,20 @@ def _render_health_status(d):
         ("Apps",       f"`{d.get('apps', '—')}`"),
         ("Adapters",   f"`{d.get('adapters', '—')}`"),
     ]
-    for svc in d.get("services", []):
-        label = svc.get("service", "service").capitalize()
-        rows.append((label, f"`{svc.get('status', '—')}`"))
+    for svc in (d.get("services") or []):
+        if isinstance(svc, dict):
+            label = str(svc.get("service", "service")).capitalize()
+            rows.append((label, f"`{svc.get('status', '—')}`"))
     return _table(["Field", "Value"], rows) + "\n\n"
 
 
 def _render_server(d):
+    """
+    Render the /health/server response showing version, runtime, and memory info.
+    The core dependencies dict is flattened into a single row for readability.
+    """
+    if not isinstance(d, dict):
+        return f"> **Unexpected response shape:** received `{type(d).__name__}`, expected dict.\n\n"
     if "_error" in d:
         return f"> **Error:** {d['_error']}\n\n"
     mem  = d.get("memoryUsage") or {}
@@ -244,21 +420,30 @@ def _render_server(d):
         ("RSS",               _fmt_bytes(mem.get("rss", 0))),
         ("Heap used / total", f"{_fmt_bytes(mem.get('heapUsed', 0))} / {_fmt_bytes(mem.get('heapTotal', 0))}"),
     ]
-    if deps:
+    if isinstance(deps, dict) and deps:
         rows.append(("Core deps", ", ".join(f"`{k}@{v}`" for k, v in deps.items())))
     return _table(["Field", "Value"], rows) + "\n\n"
 
 
 def _render_adapters(d):
+    """
+    Render the /health/adapters response as a table sorted by state then ID.
+    DEAD and STOPPED adapters sort before RUNNING so problems are visible at
+    the top without scrolling.
+    """
+    if not isinstance(d, dict):
+        return f"> **Unexpected response shape:** received `{type(d).__name__}`, expected dict.\n\n"
     if "_error" in d:
         return f"> **Error:** {d['_error']}\n\n"
-    results = d.get("results", [])
+    results = d.get("results") or []
     if not results:
         return "_No adapters found._\n\n"
     rows = []
-    for a in sorted(results, key=lambda x: (x.get("state", ""), x.get("id", ""))):
-        conn  = (a.get("connection") or {}).get("state", "—")
-        rss   = _fmt_bytes((a.get("memoryUsage") or {}).get("rss", 0))
+    for a in sorted(results, key=lambda x: (x.get("state", "") if isinstance(x, dict) else "", x.get("id", "") if isinstance(x, dict) else "")):
+        if not isinstance(a, dict):
+            continue
+        conn = (a.get("connection") or {}).get("state", "—")
+        rss  = _fmt_bytes((a.get("memoryUsage") or {}).get("rss", 0))
         rows.append([
             f"`{a.get('id', '')}`",
             f"`{a.get('package_id', '')}`",
@@ -269,17 +454,27 @@ def _render_adapters(d):
             rss,
         ])
     total = d.get("total", len(results))
-    return _table(["ID", "Package", "Version", "State", "Connection", "Uptime", "RSS"], rows) + f"\n\n**Total: {total}**\n\n"
+    return (
+        _table(["ID", "Package", "Version", "State", "Connection", "Uptime", "RSS"], rows)
+        + f"\n\n**Total: {total}**\n\n"
+    )
 
 
 def _render_applications(d):
+    """
+    Render the /health/applications response as a table sorted alphabetically by ID.
+    """
+    if not isinstance(d, dict):
+        return f"> **Unexpected response shape:** received `{type(d).__name__}`, expected dict.\n\n"
     if "_error" in d:
         return f"> **Error:** {d['_error']}\n\n"
-    results = d.get("results", [])
+    results = d.get("results") or []
     if not results:
         return "_No applications found._\n\n"
     rows = []
-    for a in sorted(results, key=lambda x: x.get("id", "")):
+    for a in sorted(results, key=lambda x: x.get("id", "") if isinstance(x, dict) else ""):
+        if not isinstance(a, dict):
+            continue
         rss = _fmt_bytes((a.get("memoryUsage") or {}).get("rss", 0))
         rows.append([
             f"`{a.get('id', '')}`",
@@ -290,120 +485,238 @@ def _render_applications(d):
             rss,
         ])
     total = d.get("total", len(results))
-    return _table(["ID", "Package", "Version", "State", "Uptime", "RSS"], rows) + f"\n\n**Total: {total}**\n\n"
+    return (
+        _table(["ID", "Package", "Version", "State", "Uptime", "RSS"], rows)
+        + f"\n\n**Total: {total}**\n\n"
+    )
 
 
 def _render_integrations(d):
-    if "_error" in d:
+    """
+    Render the /integration-models response.
+    The response uses an 'integrationModels' key (not 'results') and includes
+    server connection details nested under 'properties.server'.  Each row shows
+    the model name, the configured host, and a truncated description.
+    """
+    if "_error" in (d if isinstance(d, dict) else {}):
         return f"> **Error:** {d['_error']}\n\n"
     if isinstance(d, list):
         results, total = d, len(d)
-    else:
-        # Response uses "integrationModels" key
-        results = d.get("integrationModels", d.get("results", d.get("items", [])))
+    elif isinstance(d, dict):
+        results = d.get("integrationModels", d.get("results", d.get("items", []))) or []
         total   = d.get("total", len(results))
+    else:
+        return f"> **Unexpected response shape:** received `{type(d).__name__}`.\n\n"
     if not results:
         return "_No integration models found._\n\n"
     rows = []
     for m in results:
-        name = m.get("versionId", m.get("model", "—"))
-        desc = (m.get("description") or "").replace("\n", " ")
+        if not isinstance(m, dict):
+            continue
+        name  = m.get("versionId", m.get("model", "—"))
+        desc  = str(m.get("description") or "").replace("\n", " ")
         if len(desc) > 90:
             desc = desc[:87] + "..."
-        props = m.get("properties", {})
-        server = props.get("server", {})
-        host = f"{server.get('protocol', '')}://{server.get('host', '')}".strip("://") if server else "—"
-        rows.append([f"`{name}`", host, desc])
-    return _table(["Model", "Host", "Description"], rows) + f"\n\n**Total: {total}**\n\n"
+        props  = m.get("properties") or {}
+        server = props.get("server") or {} if isinstance(props, dict) else {}
+        proto  = server.get("protocol", "")
+        host   = server.get("host", "")
+        endpoint = f"{proto}://{host}".strip(":/") if (proto or host) else "—"
+        rows.append([f"`{name}`", endpoint, desc])
+    return (
+        _table(["Model", "Host", "Description"], rows)
+        + f"\n\n**Total: {total}**\n\n"
+    )
 
 
 def _render_config(d):
-    if "_error" in d:
+    """
+    Render the /server/config response.
+    The endpoint returns a flat array of {name, origin, value} entries.  Values
+    that IAP already masks with '********' or whose name contains a sensitive
+    key token are shown as [REDACTED].  Unexpected response shapes fall back to
+    a redacted JSON code block.
+    """
+    if isinstance(d, dict) and "_error" in d:
         return f"> **Error:** {d['_error']}\n\n"
-    # /server/config returns a flat array of {name, origin, value} entries
     if isinstance(d, list) and d and isinstance(d[0], dict) and "name" in d[0] and "origin" in d[0]:
         rows = []
         for entry in d:
-            name  = entry.get("name", "")
-            origin = entry.get("origin", "")
+            if not isinstance(entry, dict):
+                continue
+            name   = str(entry.get("name", ""))
+            origin = str(entry.get("origin", ""))
             value  = entry.get("value", "")
-            # Redact if IAP already masked it or any underscore-delimited token in the
-            # name exactly matches a sensitive key (avoids "bypass" matching "pass", etc.)
             name_tokens = set(name.lower().split("_"))
-            if value == "********" or name_tokens & _SENSITIVE_KEYS:
-                value = "`[REDACTED]`"
+            if str(value) == "********" or name_tokens & _SENSITIVE_KEYS:
+                display = "`[REDACTED]`"
             else:
-                value = f"`{value}`" if value != "" else "—"
-            rows.append([f"`{name}`", origin, value])
+                display = f"`{value}`" if value != "" else "—"
+            rows.append([f"`{name}`", origin, display])
         return _table(["Name", "Origin", "Value"], rows) + "\n\n"
-    # Fallback for unexpected shapes
-    return "```json\n" + json.dumps(_redact(d), indent=2) + "\n```\n\n"
+    # Fallback: unknown shape — redact and dump as JSON
+    try:
+        return "```json\n" + json.dumps(_redact(d), indent=2) + "\n```\n\n"
+    except Exception as exc:
+        return f"> **Could not render server config:** {exc}\n\n"
 
 
 def _render_workers(d):
+    """
+    Render the /workflow_engine/workers/status response showing job and task
+    worker state.  Columns map directly to the admin UI labels:
+      running       → Accept New Jobs / Execute Job Tasks toggle
+      clusterValue  → Enabled Centrally (Default)
+      localValue    → Enabled Locally
+      startupValue  → value at startup
+    """
+    if not isinstance(d, dict):
+        return f"> **Unexpected response shape:** received `{type(d).__name__}`, expected dict.\n\n"
     if "_error" in d:
         return f"> **Error:** {d['_error']}\n\n"
     rows = []
     for label, key in [("Job Worker", "jobWorker"), ("Task Worker", "taskWorker")]:
-        w = d.get(key, {})
+        w = d.get(key) or {}
+        if not isinstance(w, dict):
+            w = {}
         rows.append([
             label,
             "Yes" if w.get("running") else "No",
-            w.get("clusterValue", "—"),
-            w.get("localValue", "—"),
+            str(w.get("clusterValue", "—")),
+            str(w.get("localValue", "—")),
             str(w.get("startupValue", "—")),
         ])
     return _table(["Worker", "Running", "Cluster Value (Central)", "Local Value", "Startup Value"], rows) + "\n\n"
 
 
-# ── Kubernetes ───────────────────────────────────────────────────────────────
+# ── Kubernetes ────────────────────────────────────────────────────────────────
 
+# Each entry: (display label, kubectl args, namespaced)
+# namespaced=True  → -n <namespace> is appended
+# namespaced=False → cluster-level resource, no namespace flag
 _K8S_CHECKS = [
-    ("Pods",                     ["get", "pods", "-o", "wide"],                        True),
-    ("StatefulSets",             ["get", "statefulsets"],                              True),
-    ("Services",                 ["get", "services"],                                  True),
-    ("Ingress",                  ["get", "ingress"],                                   True),
-    ("Persistent Volume Claims", ["get", "pvc"],                                       True),
-    ("ConfigMaps",               ["get", "configmaps"],                                True),
-    ("Nodes",                    ["get", "nodes"],                                     False),
-    ("Pod Resource Usage",       ["top", "pods"],                                      True),
-    ("Events",                   ["get", "events", "--sort-by=.lastTimestamp"],        True),
+    ("Pods",                     ["get", "pods", "-o", "wide"],                 True),
+    ("StatefulSets",             ["get", "statefulsets"],                       True),
+    ("Services",                 ["get", "services"],                           True),
+    ("Ingress",                  ["get", "ingress"],                            True),
+    ("Persistent Volume Claims", ["get", "pvc"],                                True),
+    ("ConfigMaps",               ["get", "configmaps"],                         True),
+    ("Nodes",                    ["get", "nodes"],                              False),
+    ("Pod Resource Usage",       ["top", "pods"],                               True),
+    ("Events",                   ["get", "events", "--sort-by=.lastTimestamp"], True),
 ]
 
 
 def _kubectl_available():
+    """
+    Return True if kubectl is present on PATH, False otherwise.
+    Uses shutil.which so it works on all platforms without spawning a process.
+    """
     return shutil.which("kubectl") is not None
 
 
 def _kubectl_run(args, namespace=None):
-    """Run a kubectl command. Returns output string on success, None on any failure."""
+    """
+    Execute a kubectl command and return its stdout as a string.
+
+    Returns None when the command fails, the resource type does not exist in
+    the cluster, or the process cannot be started.  The full command and any
+    stderr output are printed to stderr so the operator can diagnose failures
+    without having to re-run kubectl manually.
+    """
     cmd = ["kubectl"] + args + (["-n", namespace] if namespace else [])
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-        return r.stdout.strip() if r.returncode == 0 else None
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        if r.returncode == 0:
+            return r.stdout.strip() or None
+        # Non-zero exit — print stderr so the operator can see why it failed
+        detail = r.stderr.strip() or "no error detail available"
+        print(
+            f"  [kubectl] Command failed (exit {r.returncode}): {' '.join(cmd)}\n"
+            f"            {detail}",
+            file=sys.stderr,
+        )
+        return None
+    except subprocess.TimeoutExpired:
+        print(
+            f"  [kubectl] Timed out after 30s: {' '.join(cmd)}",
+            file=sys.stderr,
+        )
+        return None
+    except FileNotFoundError:
+        # kubectl disappeared between the availability check and execution
+        print(
+            "  [kubectl] kubectl not found — was it removed during the run?",
+            file=sys.stderr,
+        )
+        return None
+    except OSError as exc:
+        print(
+            f"  [kubectl] OS error running {' '.join(cmd)}: {exc}",
+            file=sys.stderr,
+        )
         return None
 
 
 def _kubectl_context_namespace():
-    """Return the namespace from the active kubectl context, or 'default'."""
-    r = subprocess.run(
-        ["kubectl", "config", "view", "--minify", "-o",
-         "jsonpath={.contexts[0].context.namespace}"],
-        capture_output=True, text=True, timeout=10,
-    )
-    return r.stdout.strip() or "default"
+    """
+    Return the namespace set in the active kubectl context.
+    Falls back to 'default' if the context has no namespace set or if the
+    kubectl config command fails for any reason.
+    """
+    try:
+        r = subprocess.run(
+            ["kubectl", "config", "view", "--minify", "-o",
+             "jsonpath={.contexts[0].context.namespace}"],
+            capture_output=True, text=True, timeout=10,
+        )
+        return r.stdout.strip() or "default"
+    except subprocess.TimeoutExpired:
+        print(
+            "  [kubectl] Timed out reading current context namespace — using 'default'.",
+            file=sys.stderr,
+        )
+        return "default"
+    except (FileNotFoundError, OSError) as exc:
+        print(
+            f"  [kubectl] Cannot read context namespace: {exc} — using 'default'.",
+            file=sys.stderr,
+        )
+        return "default"
 
 
 def _collect_k8s(namespace):
+    """
+    Run all kubectl checks in _K8S_CHECKS and return their output in a dict.
+    Each value is either the command's stdout string or None if the command
+    failed or produced no output (e.g. no pods exist, metrics unavailable).
+    The namespace key is always present for use in the report header.
+    """
     data = {"namespace": namespace}
     for label, args, namespaced in _K8S_CHECKS:
-        data[label] = _kubectl_run(args, namespace=namespace if namespaced else None)
+        try:
+            data[label] = _kubectl_run(args, namespace=namespace if namespaced else None)
+        except Exception as exc:
+            print(
+                f"  [kubectl] Unexpected error collecting '{label}': {exc}",
+                file=sys.stderr,
+            )
+            data[label] = None
     return data
 
 
 def _render_k8s(data):
-    out = [f"**Namespace:** `{data['namespace']}`\n\n"]
+    """
+    Render the collected kubectl outputs as a markdown section.
+    Each check gets its own subsection with the raw kubectl output in a code
+    block.  Checks that returned None are shown as 'Not available' — this is
+    normal for resources that do not exist in the namespace or for kubectl top
+    when the metrics server is not installed.
+    """
+    if not isinstance(data, dict):
+        return "> **Kubernetes data unavailable.**\n\n"
+    namespace = data.get("namespace", "unknown")
+    out = [f"**Namespace:** `{namespace}`\n\n"]
     for label, _, _ in _K8S_CHECKS:
         out.append(f"#### {label}\n\n")
         output = data.get(label)
@@ -428,94 +741,151 @@ _ENDPOINTS = [
 
 
 def _collect(base, username, password, ctx, token=None):
+    """
+    Authenticate to an IAP node and fetch all endpoint data.
+
+    If token is supplied (SSO mode) login is skipped entirely.  Otherwise
+    _login is called to obtain a session token.  Before fetching all endpoints
+    a lightweight probe against /health/server validates the token — a 401
+    at this stage means the token is expired or wrong and we return early with
+    a specific reason code so the caller can print a helpful message.
+
+    Returns a dict with 'ok': True and one key per _ENDPOINTS entry on
+    success, or 'ok': False (with an optional '_reason' key) on failure.
+    """
     if not token:
         token = _login(base, username, password, ctx)
     if not token:
         return {"ok": False}
-    # Validate the token with a lightweight authenticated endpoint before proceeding
+
+    # Probe with an authenticated call before fetching everything.
+    # If we get a 401 the token is invalid/expired regardless of source.
     probe = _get(base, "/health/server", token, ctx)
     if "_error" in probe and "401" in str(probe.get("_error", "")):
         return {"ok": False, "_reason": "token_expired"}
+
     result = {"ok": True}
     for key, path in _ENDPOINTS:
-        result[key] = _get(base, path, token, ctx)
+        try:
+            result[key] = _get(base, path, token, ctx)
+        except Exception as exc:
+            result[key] = {"_error": f"Unexpected error fetching {path}: {exc}"}
     return result
 
 
 # ── Report assembly ───────────────────────────────────────────────────────────
 
 def _build_report(hosts, results, generated_at, k8s_data=None):
-    arch = "High Availability" if len(hosts) > 1 else "Single Node"
-    out  = []
+    """
+    Assemble the full markdown certification report from collected data.
 
-    out.append("# Itential Automation Platform — Certification Report\n\n")
-    meta_rows = [
-        ["**Generated**",    generated_at],
-        ["**Architecture**", arch],
-        ["**Nodes**",        str(len(hosts))],
-        ["**Hosts**",        ", ".join(f"`{h}`" for h in hosts)],
-    ]
-    out.append(_table(["", ""], meta_rows) + "\n\n---\n\n")
+    Iterates hosts and their corresponding result dicts.  Each host section
+    calls the appropriate renderer via _safe_render so that a malformed or
+    unexpected API response for one section cannot prevent the rest of the
+    report from being written.
+    """
+    try:
+        arch = "High Availability" if len(hosts) > 1 else "Single Node"
+        out  = []
 
-    if k8s_data:
-        out.append("## Kubernetes Resources\n\n")
-        out.append(_render_k8s(k8s_data))
-        out.append("---\n\n")
+        out.append("# Itential Automation Platform — Certification Report\n\n")
+        meta_rows = [
+            ["**Generated**",    generated_at],
+            ["**Architecture**", arch],
+            ["**Nodes**",        str(len(hosts))],
+            ["**Hosts**",        ", ".join(f"`{h}`" for h in hosts)],
+        ]
+        out.append(_table(["", ""], meta_rows) + "\n\n---\n\n")
 
-    for host, r in zip(hosts, results):
-        out.append(f"## `{host}`\n\n")
+        if k8s_data:
+            out.append("## Kubernetes Resources\n\n")
+            out.append(_safe_render("Kubernetes", _render_k8s, k8s_data))
+            out.append("---\n\n")
 
-        if not r["ok"]:
-            if r.get("_reason") == "token_expired":
-                out.append("**Login:** token expired or invalid — obtain a fresh session token and re-run.\n\n---\n\n")
-            else:
-                out.append("**Login:** failed\n\n---\n\n")
-            continue
+        for host, r in zip(hosts, results):
+            out.append(f"## `{host}`\n\n")
 
-        out.append("**Login:** ok\n\n")
+            if not isinstance(r, dict) or not r.get("ok"):
+                reason = (r or {}).get("_reason", "")
+                if reason == "token_expired":
+                    out.append(
+                        "**Login:** token expired or invalid — "
+                        "obtain a fresh session token and re-run.\n\n---\n\n"
+                    )
+                else:
+                    out.append("**Login:** failed\n\n---\n\n")
+                continue
 
-        out.append("### Health Status\n\n")
-        out.append(_render_health_status(r["health_status"]))
+            out.append("**Login:** ok\n\n")
 
-        out.append("### Server Info\n\n")
-        out.append(_render_server(r["health_server"]))
+            out.append("### Health Status\n\n")
+            out.append(_safe_render("Health Status", _render_health_status, r.get("health_status", {})))
 
-        out.append("### Adapters\n\n")
-        out.append(_render_adapters(r["health_adapters"]))
+            out.append("### Server Info\n\n")
+            out.append(_safe_render("Server Info", _render_server, r.get("health_server", {})))
 
-        out.append("### Applications\n\n")
-        out.append(_render_applications(r["health_apps"]))
+            out.append("### Adapters\n\n")
+            out.append(_safe_render("Adapters", _render_adapters, r.get("health_adapters", {})))
 
-        out.append("### Integration Models\n\n")
-        out.append(_render_integrations(r["integrations"]))
+            out.append("### Applications\n\n")
+            out.append(_safe_render("Applications", _render_applications, r.get("health_apps", {})))
 
-        out.append("### Worker Status\n\n")
-        out.append(_render_workers(r["worker_status"]))
+            out.append("### Integration Models\n\n")
+            out.append(_safe_render("Integration Models", _render_integrations, r.get("integrations", {})))
 
-        out.append("### Server Configuration\n\n")
-        out.append(_render_config(r["server_config"]))
+            out.append("### Worker Status\n\n")
+            out.append(_safe_render("Worker Status", _render_workers, r.get("worker_status", {})))
 
-        out.append("---\n\n")
+            out.append("### Server Configuration\n\n")
+            out.append(_safe_render("Server Configuration", _render_config, r.get("server_config", {})))
 
-    return "".join(out)
+            out.append("---\n\n")
+
+        return "".join(out)
+
+    except Exception as exc:
+        # Last-resort fallback — if report assembly itself fails, return a
+        # minimal document so the file is still written with diagnostic info.
+        return (
+            "# IAP Certification Report — Assembly Error\n\n"
+            f"> Report generation encountered an unexpected error: `{exc}`\n\n"
+            f"> Generated at: {generated_at}\n\n"
+            f"> Hosts attempted: {', '.join(hosts)}\n"
+        )
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 def main():
+    """
+    Main entry point — orchestrates argument parsing, authentication, data
+    collection, and report writing.
+
+    The script is designed to never raise an unhandled exception.  Every
+    collection step degrades gracefully: a failed host is marked as unreachable
+    in the report, a failed kubectl command shows 'Not available', and a failed
+    file write falls back to printing the report to stdout so the output is
+    never lost.
+    """
     args = _parse_args()
 
-    # Collect hosts — prompt interactively if none provided
+    # Collect hosts — prompt interactively if none provided on the command line
     hosts = list(dict.fromkeys(args.hosts or []))
     if not hosts:
-        url = input("IAP host URL (e.g. https://iap.example.com): ").strip()
+        try:
+            url = input("IAP host URL (e.g. https://iap.example.com): ").strip()
+        except (EOFError, KeyboardInterrupt):
+            sys.exit("\nNo host provided.")
         if not url:
             sys.exit("Error: no host provided.")
         hosts = [url]
 
     ctx = _ssl_ctx(args.ca_cert)
 
-    # Auth: pre-supplied token (SSO) takes priority over username/password
+    # Auth resolution:
+    #   --token supplied  → use it directly (SSO flow, skips /login entirely)
+    #   --username admin  → try default admin/admin first, prompt on rejection
+    #   --username other  → prompt for password immediately
     supplied_token = args.token or None
     if supplied_token:
         password = None
@@ -527,7 +897,10 @@ def main():
             password = _DEFAULT_PASS
             prompted = False
         else:
-            password = getpass.getpass(f"Password for '{args.username}': ")
+            try:
+                password = getpass.getpass(f"Password for '{args.username}': ")
+            except (EOFError, KeyboardInterrupt):
+                sys.exit("\nPassword entry cancelled.")
             prompted = True
 
     print(f"\nCertifying {len(hosts)} node(s)...\n")
@@ -537,27 +910,36 @@ def main():
         print(f"  {host}")
         result = _collect(host, args.username, password, ctx, token=supplied_token)
 
-        # If default admin/admin was rejected, prompt once and reuse for remaining hosts
-        if not result["ok"] and not prompted:
-            print(f"    Default credentials rejected.")
-            password = getpass.getpass(f"    Password for '{args.username}': ")
+        # If default admin/admin was rejected, prompt once and reuse the new
+        # password for all remaining hosts in the list
+        if not (result or {}).get("ok") and not prompted:
+            print("    Default credentials rejected.")
+            try:
+                password = getpass.getpass(f"    Password for '{args.username}': ")
+            except (EOFError, KeyboardInterrupt):
+                print("    Password entry cancelled — marking host as unreachable.")
+                all_results.append({"ok": False})
+                continue
             prompted = True
             result = _collect(host, args.username, password, ctx)
 
-        if not result["ok"]:
-            if result.get("_reason") == "token_expired":
-                print(f"    Login: token expired or invalid — grab a fresh token and re-run.")
+        if not (result or {}).get("ok"):
+            if (result or {}).get("_reason") == "token_expired":
+                print("    Login: token expired or invalid — grab a fresh token and re-run.")
             else:
-                print(f"    Login: failed")
+                print("    Login: failed")
         else:
-            print(f"    Login: ok")
+            print("    Login: ok")
             for key, path in _ENDPOINTS:
-                status = "ok" if "_error" not in result[key] else f"error ({result[key].get('_error', '')})"
+                endpoint_data = result.get(key, {})
+                status = "ok" if "_error" not in (endpoint_data or {}) else \
+                         f"error ({(endpoint_data or {}).get('_error', 'unknown')})"
                 print(f"    {path}: {status}")
 
-        all_results.append(result)
+        all_results.append(result or {"ok": False})
 
-    # Kubernetes resource collection
+    # Kubernetes resource collection — entirely optional, skipped if kubectl
+    # is not on PATH or if any individual command fails
     k8s_data = None
     if _kubectl_available():
         namespace = args.namespace or _kubectl_context_namespace()
@@ -569,18 +951,24 @@ def main():
     else:
         print("\nkubectl not found — skipping Kubernetes resource collection.")
 
-    now = datetime.now(tz=timezone.utc)
+    now          = datetime.now(tz=timezone.utc)
     generated_at = now.strftime("%Y-%m-%d %H:%M:%S UTC")
-    report = _build_report(hosts, all_results, generated_at, k8s_data=k8s_data)
+    report       = _build_report(hosts, all_results, generated_at, k8s_data=k8s_data)
 
-    # Filename uses the first host's hostname and today's date
     hostname = _hostname(hosts[0])
     outfile  = f"iap-certify-{hostname}-{now.strftime('%Y-%m-%d')}.md"
 
-    with open(outfile, "w", encoding="utf-8") as fh:
-        fh.write(report)
-
-    print(f"\nReport written to: {outfile}")
+    try:
+        with open(outfile, "w", encoding="utf-8") as fh:
+            fh.write(report)
+        print(f"\nReport written to: {outfile}")
+    except OSError as exc:
+        print(
+            f"\nCannot write to '{outfile}': {exc}\n"
+            "Printing report to stdout instead:\n",
+            file=sys.stderr,
+        )
+        print(report)
 
 
 if __name__ == "__main__":
