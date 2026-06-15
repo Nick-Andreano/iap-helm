@@ -3,23 +3,58 @@
 certify.py
 
 Post-installation certification report for Itential Automation Platform.
-Connects to one or more IAP nodes, collects health and status data, and
-writes a markdown report suitable for sharing with customers.
+Connects to one or more IAP nodes, collects health and status information
+from the platform APIs, optionally collects Kubernetes cluster state, and
+writes a markdown report suitable for sharing with customers or archiving
+as installation documentation.
 
 Requirements:
   Python 3.8+. No third-party packages required.
+
+Authentication:
+  Three modes are supported (evaluated in priority order):
+
+  1. Default (admin/admin)
+       No flags needed. Tries admin/admin on first connect. If rejected,
+       prompts securely for the correct password.
+
+  2. Username/password
+       --username <name>
+       Prompts securely for the password. Never pass passwords as flags.
+
+  3. Pre-supplied session token (SSO)
+       --token <value>
+       Skips /login entirely. Obtain the token from the browser:
+       DevTools > Application > Cookies > token. Tokens expire after the
+       session TTL (default 60 min) so run the script immediately after copying.
+
+  4. OAuth2 client credentials
+       --client-id <id>
+       Prompts securely for the client secret. Uses the Authorization: Bearer
+       header for all API calls instead of a session cookie.
 
 Usage:
   python3 certify.py
   python3 certify.py --host https://iap.example.com
   python3 certify.py --host https://iap01.example.com --host https://iap02.example.com
   python3 certify.py --host https://iap.example.com --username operator
+  python3 certify.py --host https://iap.example.com --token <session-token>
+  python3 certify.py --host https://iap.example.com --client-id <id>
   python3 certify.py --host https://iap.example.com --ca-cert /path/to/ca.crt
+  python3 certify.py --host https://iap.example.com -n <namespace>
 
-If --host is not provided, the script will prompt for a URL interactively.
+If --host is not provided the script prompts for a URL interactively.
+
+Kubernetes:
+  If kubectl is available on PATH, the script collects pods, services,
+  ingress, PVCs, configmaps, nodes, events, and pod resource usage from
+  the specified namespace and includes them in the report.
+  Use -n / --namespace to target a specific namespace. Defaults to the
+  active kubectl context namespace.
 
 Output:
-  iap-certify-{hostname}-{YYYY-MM-DD}.md
+  iap-certify-{hostname}-{YYYY-MM-DD}.md written to the current directory.
+  If the file cannot be written the report is printed to stdout instead.
 """
 
 import argparse
@@ -72,6 +107,11 @@ def _parse_args():
         "--token", metavar="VALUE",
         help="Session token to use directly, skipping login. Use this for SSO-protected instances: "
              "log in via browser, copy the 'token' cookie value from DevTools, and pass it here.",
+    )
+    p.add_argument(
+        "--client-id", metavar="ID",
+        help="OAuth2 client ID for client_credentials login. "
+             "The client secret is always prompted securely — never pass it on the command line.",
     )
     p.add_argument(
         "--namespace", "-n", metavar="NS",
@@ -221,17 +261,96 @@ def _login(base, username, password, ctx):
     return None
 
 
-def _get(base, path, token, ctx):
+def _login_oauth(base, client_id, client_secret, ctx):
+    """
+    Authenticate to IAP using the OAuth2 client_credentials flow.
+
+    POSTs form-encoded credentials to /oauth/token and returns the access_token
+    string on success.  Subsequent requests must send this token as an
+    Authorization: Bearer header rather than a cookie — callers are responsible
+    for setting bearer=True when calling _get.
+
+    Returns None on any failure with a descriptive message printed to stderr.
+    """
+    url = f"{base.rstrip('/')}/oauth/token"
+    try:
+        body = urllib.parse.urlencode({
+            "client_id":     client_id,
+            "client_secret": client_secret,
+            "grant_type":    "client_credentials",
+        }).encode()
+    except Exception as exc:
+        print(f"    [oauth] Failed to build request body: {exc}", file=sys.stderr)
+        return None
+
+    req = urllib.request.Request(
+        url, method="POST", data=body,
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    try:
+        with urllib.request.urlopen(req, context=ctx, timeout=30) as resp:
+            if resp.status != 200:
+                print(
+                    f"    [oauth] Server returned HTTP {resp.status} for POST {url} — "
+                    "check that the client ID and secret are correct.",
+                    file=sys.stderr,
+                )
+                return None
+            data = json.loads(resp.read().decode("utf-8", errors="replace"))
+            token = data.get("access_token")
+            if not token:
+                print(
+                    f"    [oauth] POST {url} returned HTTP 200 but no access_token "
+                    "was found in the response.  Response keys: "
+                    f"{list(data.keys()) if isinstance(data, dict) else type(data).__name__}",
+                    file=sys.stderr,
+                )
+            return token
+    except urllib.error.HTTPError as exc:
+        print(
+            f"    [oauth] HTTP {exc.code} from POST {url} — "
+            f"{exc.reason or 'no detail available'}.",
+            file=sys.stderr,
+        )
+    except urllib.error.URLError as exc:
+        print(
+            f"    [oauth] Cannot reach {url}: {exc.reason}  "
+            "Check that the host is correct and the IAP service is running.",
+            file=sys.stderr,
+        )
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        print(
+            f"    [oauth] Could not parse response from {url}: {exc}",
+            file=sys.stderr,
+        )
+    except ssl.SSLError as exc:
+        print(
+            f"    [oauth] TLS error connecting to {url}: {exc}  "
+            "Use --ca-cert if the server uses a private CA.",
+            file=sys.stderr,
+        )
+    except OSError as exc:
+        print(f"    [oauth] Network error on POST {url}: {exc}", file=sys.stderr)
+    return None
+
+
+def _get(base, path, token, ctx, bearer=False):
     """
     Perform an authenticated GET request against an IAP endpoint.
 
-    Sends the session token as a cookie.  Returns the parsed JSON response on
+    When bearer=False (default) the token is sent as a session cookie, which
+    is the standard IAP username/password and SSO flow.  When bearer=True the
+    token is sent as an Authorization: Bearer header, which is required for
+    the OAuth2 client_credentials flow.
+
+    Returns the parsed JSON response on
     success.  On any failure returns a dict containing '_error' with a
     description that includes the URL and failure reason so it can be rendered
     into the report instead of crashing the script.
     """
     url = f"{base.rstrip('/')}{path}"
-    req = urllib.request.Request(url, headers={"Cookie": f"token={token}"})
+    headers = {"Authorization": f"Bearer {token}"} if bearer else {"Cookie": f"token={token}"}
+    req = urllib.request.Request(url, headers=headers)
     try:
         with urllib.request.urlopen(req, context=ctx, timeout=30) as resp:
             body = resp.read().decode("utf-8", errors="replace")
@@ -740,15 +859,19 @@ _ENDPOINTS = [
 ]
 
 
-def _collect(base, username, password, ctx, token=None):
+def _collect(base, username, password, ctx, token=None, bearer=False):
     """
     Authenticate to an IAP node and fetch all endpoint data.
 
-    If token is supplied (SSO mode) login is skipped entirely.  Otherwise
-    _login is called to obtain a session token.  Before fetching all endpoints
-    a lightweight probe against /health/server validates the token — a 401
-    at this stage means the token is expired or wrong and we return early with
-    a specific reason code so the caller can print a helpful message.
+    Three auth modes are supported:
+      token + bearer=False  → pre-supplied SSO session cookie
+      token + bearer=True   → pre-supplied OAuth2 Bearer token (client_credentials)
+      token=None            → call _login with username/password to get a cookie token
+
+    Before fetching all endpoints a lightweight probe against /health/server
+    validates the token — a 401 at this stage means the token is expired or
+    wrong and we return early with a specific reason code so the caller can
+    print a helpful message.
 
     Returns a dict with 'ok': True and one key per _ENDPOINTS entry on
     success, or 'ok': False (with an optional '_reason' key) on failure.
@@ -760,14 +883,14 @@ def _collect(base, username, password, ctx, token=None):
 
     # Probe with an authenticated call before fetching everything.
     # If we get a 401 the token is invalid/expired regardless of source.
-    probe = _get(base, "/health/server", token, ctx)
+    probe = _get(base, "/health/server", token, ctx, bearer=bearer)
     if "_error" in probe and "401" in str(probe.get("_error", "")):
         return {"ok": False, "_reason": "token_expired"}
 
     result = {"ok": True}
     for key, path in _ENDPOINTS:
         try:
-            result[key] = _get(base, path, token, ctx)
+            result[key] = _get(base, path, token, ctx, bearer=bearer)
         except Exception as exc:
             result[key] = {"_error": f"Unexpected error fetching {path}: {exc}"}
     return result
@@ -882,15 +1005,29 @@ def main():
 
     ctx = _ssl_ctx(args.ca_cert)
 
-    # Auth resolution:
-    #   --token supplied  → use it directly (SSO flow, skips /login entirely)
+    # Auth resolution (evaluated in priority order):
+    #   --token           → pre-supplied session cookie, skips /login (SSO)
+    #   --client-id       → OAuth2 client_credentials, prompts for secret, uses Bearer header
     #   --username admin  → try default admin/admin first, prompt on rejection
     #   --username other  → prompt for password immediately
     supplied_token = args.token or None
+    client_id      = getattr(args, "client_id", None)
+    bearer         = False
+
     if supplied_token:
         password = None
         prompted = True
         print("Using supplied session token (SSO mode).")
+    elif client_id:
+        try:
+            client_secret = getpass.getpass(f"Client secret for '{client_id}': ")
+        except (EOFError, KeyboardInterrupt):
+            sys.exit("\nClient secret entry cancelled.")
+        supplied_token = None   # resolved per-host via _login_oauth
+        password       = client_secret
+        prompted       = True
+        bearer         = True
+        print("Using OAuth2 client_credentials flow (Bearer token).")
     else:
         using_default_creds = (args.username == _DEFAULT_USER)
         if using_default_creds:
@@ -908,7 +1045,14 @@ def main():
     all_results = []
     for host in hosts:
         print(f"  {host}")
-        result = _collect(host, args.username, password, ctx, token=supplied_token)
+
+        # For OAuth, obtain a fresh Bearer token per host via /oauth/token
+        if client_id:
+            oauth_token = _login_oauth(host, client_id, password, ctx)
+            result = _collect(host, None, None, ctx, token=oauth_token, bearer=True) \
+                     if oauth_token else {"ok": False}
+        else:
+            result = _collect(host, args.username, password, ctx, token=supplied_token, bearer=bearer)
 
         # If default admin/admin was rejected, prompt once and reuse the new
         # password for all remaining hosts in the list
