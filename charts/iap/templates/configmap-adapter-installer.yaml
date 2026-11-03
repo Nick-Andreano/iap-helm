@@ -389,7 +389,7 @@ data:
                 else
                     # No specific branch requested, check if we're on default branch
                     CURRENT_COMMIT=$(git rev-parse HEAD 2>/dev/null)
-                    DEFAULT_BRANCH=$(git ls-remote --symref origin HEAD | grep "^ref:" | cut -d/ -f3)
+                    DEFAULT_BRANCH=$(git ls-remote --symref origin HEAD | sed -n 's#^ref: refs/heads/\([^[:space:]]*\).*#\1#p')
                     DEFAULT_COMMIT=$(git ls-remote origin "refs/heads/$DEFAULT_BRANCH" 2>/dev/null | cut -f1)
                     
                     if [ -n "$DEFAULT_COMMIT" ] && [ "$CURRENT_COMMIT" = "$DEFAULT_COMMIT" ]; then

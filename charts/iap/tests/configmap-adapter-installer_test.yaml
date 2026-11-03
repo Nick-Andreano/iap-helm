@@ -497,3 +497,16 @@ tests:
       - matchRegex:
           path: data["install-adapters.sh"]
           pattern: 'has_modules "\$1" && built_with_current_node "\$1"'
+
+  - it: should parse the default branch name from ls-remote --symref output
+    set:
+      mountAdapterVolume: true
+      initAdapterInstaller:
+        enabled: true
+    asserts:
+      - matchRegex:
+          path: data["install-adapters.sh"]
+          pattern: "sed -n 's#\\^ref: refs/heads/"
+      - notMatchRegex:
+          path: data["install-adapters.sh"]
+          pattern: 'cut -d/ -f3'
