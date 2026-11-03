@@ -31,6 +31,20 @@ data:
     # It is only created when a "folders" repository is configured.
     STATE_DIR=".adapter-installer"
 
+    # Node.js major version of this init container. Compiled dependencies are tied to it, so each adapter records the
+    # major it was installed with in NODE_MARKER and is reinstalled when the major changes (for example Node.js 20 to 22).
+    NODE_VERSION=$(node -v)
+    NODE_MAJOR=${NODE_VERSION#v}
+    NODE_MAJOR=${NODE_MAJOR%%.*}
+    NODE_MARKER=".installer-node-major"
+    echo "Init container Node.js version: $NODE_VERSION"
+
+    # True when adapter directory $1 was installed with the Node.js major of this init container.
+    # A missing marker (adapter installed by an older chart version) counts as a mismatch.
+    built_with_current_node() {
+        [ "$(cat "$1/$NODE_MARKER" 2>/dev/null)" = "$NODE_MAJOR" ]
+    }
+
     # Prints the commit a branch, tag or HEAD points to on the remote. Annotated tags resolve to their commit.
     # Returns 1 when the remote cannot be read or the ref does not exist.
     remote_commit_for() {
@@ -67,11 +81,12 @@ data:
     }
     
     # A folder is complete when it exists and, unless npm install is skipped for it, has its node_modules
+    # built with the current Node.js major. Folders that skip npm install ship their node_modules in git and are not checked.
     folder_complete() {
         if skips_npm "$1" "$2"; then
             [ -d "$1" ]
         else
-            has_modules "$1"
+            has_modules "$1" && built_with_current_node "$1"
         fi
     }
 
@@ -124,7 +139,7 @@ data:
                 SUCCESSFUL_INSTALLS+=("$label (already installed)")
                 return 0
             fi
-            echo "Some folders of $label are missing or incomplete, reconciling"
+            echo "Some folders of $label are missing, incomplete or were not installed with Node.js $NODE_MAJOR, reconciling"
         fi
 
         # Something changed: fetch the commit once, without a checkout
@@ -209,6 +224,7 @@ data:
                     failed=$((failed + 1))
                     continue
                 fi
+                printf '%s\n' "$NODE_MAJOR" > "$tmp/$NODE_MARKER"
             fi
     
             if [ -d "$name" ]; then mv "$name" "$old"; fi
@@ -393,6 +409,16 @@ data:
                         NEEDS_INSTALL=true
                     fi
                 fi
+
+                # Dependencies built with another Node.js major (or by an older chart version) must be rebuilt
+                if [ "$NEEDS_INSTALL" = "false" ] && ! built_with_current_node "."; then
+                    if [ "$REMOTE_OK" = "false" ]; then
+                        echo "WARNING: $ADAPTER_NAME was not installed with Node.js $NODE_MAJOR and the git remote is unreachable, keeping the installed copy"
+                    else
+                        echo "$ADAPTER_NAME was installed with Node.js $(cat "$NODE_MARKER" 2>/dev/null || echo unknown), this init container runs Node.js $NODE_MAJOR, will reinstall"
+                        NEEDS_INSTALL=true
+                    fi
+                fi
             else
                 echo "Directory exists but not a git repository, will reinstall"
             fi
@@ -437,6 +463,7 @@ data:
                     # Check if packages were actually installed regardless of exit code
                     if [ -d "node_modules" ] && [ "$(ls -A node_modules 2>/dev/null | wc -l)" -gt 0 ]; then
                         echo "NPM install completed successfully for $ADAPTER_NAME"
+                        printf '%s\n' "$NODE_MAJOR" > "$NODE_MARKER"
                         SUCCESSFUL_INSTALLS+=("$ADAPTER_NAME")
                     else
                         echo "NPM install failed for $ADAPTER_NAME"

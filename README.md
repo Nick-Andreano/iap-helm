@@ -238,6 +238,13 @@ initAdapterInstaller:
       skipNpmInstall: ["app-*"]
 ```
 
+The installer records the Node.js major version of the init container (`initAdapterInstaller.image.tag`,
+default `22-bullseye`) in each adapter and reinstalls an adapter when that major version changes, so
+adapters are always built with the same Node.js as the Platform. Adapters installed by an earlier chart
+version have no record and are reinstalled once on the first start after upgrading to chart 1.13.0.
+Adapters with native add-ons need `--ignore-scripts` removed from `initAdapterInstaller.npmInstallOptions`.
+See [Node.js Version and Native Add-ons](docs/adapter-installer.md#nodejs-version-and-native-add-ons).
+
 If the installer must reach git and the npm registry through an HTTP proxy, set the proxy variables
 with `initAdapterInstaller.env`. See [docs/adapter-installer.md](docs/adapter-installer.md) for that, for
 the repository layout the installer expects, how updates and removals behave, and troubleshooting.
@@ -290,7 +297,7 @@ the repository layout the installer expects, how updates and removals behave, an
 | initAdapterInstaller.gitCredentials.usernameKey | string | `"username"` | Key in the Secret that holds the username |
 | initAdapterInstaller.image.pullPolicy | string | `"IfNotPresent"` | The image pull policy for the adapter installer init container |
 | initAdapterInstaller.image.repository | string | `"node"` | The repository for the adapter installer init container image |
-| initAdapterInstaller.image.tag | string | `"18-bullseye"` | The tag for the adapter installer init container image |
+| initAdapterInstaller.image.tag | string | `"22-bullseye"` | The tag for the adapter installer init container image. Use the same Node.js major version as the Platform image (Node.js 22 for Platform 6.6.0 and later). Adapters are reinstalled when this major changes. |
 | initAdapterInstaller.npmInstallOptions | list | `["--silent","--no-audit","--no-fund","--ignore-scripts"]` | npm install options used when installing adapter dependencies |
 | initAdapterInstaller.repositories | list | `nil` | Adapter repositories to install. Each entry is a URL string, an object with `url` and optional `branch`, or an object with `type: folders` (one repository with many adapter folders) and optional `branch`, `path` and `skipNpmInstall`. See docs/adapter-installer.md. |
 | initAdapterInstaller.securityContext | object | `{"allowPrivilegeEscalation":false,"runAsGroup":1001,"runAsNonRoot":true,"runAsUser":1001}` | Security context for the init container |

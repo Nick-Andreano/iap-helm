@@ -4,7 +4,7 @@
 
 This is the Helm chart for the **Itential Automation Platform (IAP)** — a network automation platform deployed as a Kubernetes StatefulSet. The chart lives in `charts/iap/` and is versioned separately from the repo.
 
-- **Chart version**: 1.11.0
+- **Chart version**: 1.13.0
 - **App version**: 6.0.7 (IAP release)
 - **Helm requirement**: v3.15.0+
 - **Chart type**: application
@@ -190,10 +190,10 @@ These Kubernetes secrets must exist before install:
 
 Controlled by `initAdapterInstaller.enabled: true` + `mountAdapterVolume: true`.
 
-- Runs a Node.js 18 init container before IAP starts
+- Runs a Node.js 22 init container (`node:22-bullseye` by default) before IAP starts
 - Executes a bash script (`configmap-adapter-installer.yaml`) that:
   - Clones git repos (GitLab, GitHub, Bitbucket) into the adapters volume
-  - Detects branch/tag changes and reinstalls only when needed
+  - Detects branch/tag changes and Node.js major version changes (`.installer-node-major` marker in each adapter) and reinstalls only when needed
   - Keeps an installed adapter (with its `node_modules`) when the git remote cannot be reached
   - Removes adapters no longer in the list
   - Runs `npm install` with configurable options

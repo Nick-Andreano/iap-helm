@@ -29,8 +29,9 @@ initAdapterInstaller:
   image:
     # -- The repository for the adapter installer init container image
     repository: node
-    # -- The tag for the adapter installer init container image
-    tag: "18-bullseye"
+    # -- The tag for the adapter installer init container image. Use the same Node.js major version as the
+    # Itential Platform image (Node.js 22 for Platform 6.6.0 and later). Adapters are reinstalled when this major changes.
+    tag: "22-bullseye"
     # -- The image pull policy for the adapter installer init container
     pullPolicy: IfNotPresent
   # -- Security context for the init container
@@ -62,7 +63,7 @@ initAdapterInstaller:
   # -- Credentials for cloning adapter repositories over HTTPS from a private git server.
   # Create the Secret in the release namespace, for example:
   #   kubectl create secret generic adapter-git-credentials --from-literal=username=<user> --from-literal=password=<token>
-  # The Secret is mounted read-only into the init container and handed to git through GIT_ASKPASS (works with the git 2.30 in the default node:18-bullseye image).
+  # The Secret is mounted read-only into the init container and handed to git through GIT_ASKPASS (works with the git 2.30 in the default node:22-bullseye image).
   # The credentials are not written to the adapter volume or to the clone's .git/config.
   gitCredentials:
     # -- Name of an existing Secret holding the git credentials. Empty means anonymous clones.

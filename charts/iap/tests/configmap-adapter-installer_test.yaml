@@ -438,3 +438,62 @@ tests:
       - matchRegex:
           path: data["install-adapters.sh"]
           pattern: 'Skipping \$ADAPTER_NAME installation \(\$SKIP_REASON\)'
+
+  - it: should detect the Node.js major version of the init container
+    set:
+      mountAdapterVolume: true
+      initAdapterInstaller:
+        enabled: true
+    asserts:
+      - matchRegex:
+          path: data["install-adapters.sh"]
+          pattern: 'NODE_VERSION=\$\(node -v\)'
+      - matchRegex:
+          path: data["install-adapters.sh"]
+          pattern: 'NODE_MARKER="\.installer-node-major"'
+
+  - it: should reinstall an adapter that was installed with another Node.js major
+    set:
+      mountAdapterVolume: true
+      initAdapterInstaller:
+        enabled: true
+    asserts:
+      - matchRegex:
+          path: data["install-adapters.sh"]
+          pattern: 'built_with_current_node "\."'
+      - matchRegex:
+          path: data["install-adapters.sh"]
+          pattern: 'this init container runs Node\.js \$NODE_MAJOR, will reinstall'
+
+  - it: should keep a mismatched adapter when the git remote is unreachable
+    set:
+      mountAdapterVolume: true
+      initAdapterInstaller:
+        enabled: true
+    asserts:
+      - matchRegex:
+          path: data["install-adapters.sh"]
+          pattern: 'was not installed with Node\.js \$NODE_MAJOR and the git remote is unreachable, keeping the installed copy'
+
+  - it: should record the Node.js major after a successful npm install
+    set:
+      mountAdapterVolume: true
+      initAdapterInstaller:
+        enabled: true
+    asserts:
+      - matchRegex:
+          path: data["install-adapters.sh"]
+          pattern: 'printf ''%s\\n'' "\$NODE_MAJOR" > "\$NODE_MARKER"'
+      - matchRegex:
+          path: data["install-adapters.sh"]
+          pattern: 'printf ''%s\\n'' "\$NODE_MAJOR" > "\$tmp/\$NODE_MARKER"'
+
+  - it: should check the Node.js major of folders that run npm install
+    set:
+      mountAdapterVolume: true
+      initAdapterInstaller:
+        enabled: true
+    asserts:
+      - matchRegex:
+          path: data["install-adapters.sh"]
+          pattern: 'has_modules "\$1" && built_with_current_node "\$1"'

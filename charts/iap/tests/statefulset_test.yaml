@@ -877,6 +877,17 @@ tests:
           path: spec.template.spec.initContainers[0].securityContext.allowPrivilegeEscalation
           value: false
 
+  - it: should default the adapter installer image to Node.js 22
+    set:
+      statefulset.enabled: true
+      mountAdapterVolume: true
+      initAdapterInstaller:
+        enabled: true
+    asserts:
+      - equal:
+          path: spec.template.spec.initContainers[0].image
+          value: "node:22-bullseye"
+
   - it: should mount configmap and volumes correctly in initContainer
     set:
       statefulset.enabled: true

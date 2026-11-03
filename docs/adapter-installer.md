@@ -9,6 +9,7 @@ The adapter installer uses a Kubernetes initContainer that runs before the main 
 ## Key Features
 
 - **Smart Version Detection**: Only reinstalls adapters when versions change
+- **Node.js Version Awareness**: Reinstalls an adapter when the Node.js major version of the init container differs from the one it was installed with (for example Node.js 20 to 22)
 - **Automatic Cleanup**: Removes obsolete adapters not in the repositories list
 - **Keeps Installed Adapters When Git Is Unreachable**: An expired token, a network problem or a git host outage does not remove an adapter that is already installed
 - **Branch/Tag Support**: Install specific versions or use default branches
@@ -40,7 +41,7 @@ initAdapterInstaller:
   enabled: true
   image:
     repository: node
-    tag: "18-bullseye"
+    tag: "22-bullseye"
     pullPolicy: IfNotPresent
   securityContext:
     runAsUser: 1001
@@ -182,7 +183,7 @@ initAdapterInstaller:
   enabled: true
   image:
     repository: node
-    tag: "18-bullseye"
+    tag: "22-bullseye"
     pullPolicy: IfNotPresent
   securityContext:
     runAsUser: 1001          # Must match podSecurityContext
@@ -233,6 +234,31 @@ npmInstallOptions:
   - "--ignore-scripts"
 ```
 
+### Node.js Version and Native Add-ons
+
+Compiled dependencies are tied to the Node.js version they were built with. Itential Platform 6.6.0 and later run on Node.js 22 (earlier releases ran on Node.js 20), and every sideloaded adapter runs on the Platform's Node.js, so adapters must be built with the same major version.
+
+- **The init container image sets the Node.js version.** `initAdapterInstaller.image.tag` defaults to `22-bullseye`. Keep it on the same Node.js major version as the Platform image. For a Platform release that still runs Node.js 20, set `tag: "20-bullseye"`.
+- **The installer records the major version.** After a successful `npm install` it writes the Node.js major version (for example `22`) to `.installer-node-major` in the adapter directory.
+- **A different major version triggers a reinstall.** On every start the installer compares that file to the Node.js version of the init container. If they differ, the adapter is removed, cloned again and reinstalled, even when the git commit has not changed. The log shows `adapter-x was installed with Node.js 20, this init container runs Node.js 22, will reinstall`. Patch and minor changes (22.11 to 22.12) do not trigger a reinstall.
+- **Adapters installed by an older chart version have no marker** and are reinstalled once on the first start after the upgrade. See [Upgrading Helm Chart](#upgrading-helm-chart).
+- **If the git remote is unreachable**, an adapter with a different Node.js major version is kept (it cannot be reinstalled) and the log shows `WARNING: <adapter> was not installed with Node.js 22 and the git remote is unreachable, keeping the installed copy`. Fix the connection and restart the pod to rebuild it.
+- **`type: folders` entries follow the same rule**, except for folders that match `skipNpmInstall`. Those ship their `node_modules` in git, so the installer does not rebuild them. Their `node_modules` must be built with the Node.js version of the Platform before they are committed.
+
+**Adapters with native add-ons.** The default `npmInstallOptions` include `--ignore-scripts`, which stops dependency install scripts from running. Dependencies that compile a native add-on (`node-gyp`) are then not built. For an adapter that has them, remove `--ignore-scripts` so the add-on is compiled with the init container's Node.js:
+
+```yaml
+initAdapterInstaller:
+  npmInstallOptions:
+    - "--silent"
+    - "--no-audit"
+    - "--no-fund"
+```
+
+`npmInstallOptions` applies to every adapter in the list, and without `--ignore-scripts` the install scripts of all dependencies of all adapters run. Only do this for repositories you trust. The `node` image includes the build tools (`python3`, `make`, `g++`) that `node-gyp` needs.
+
+**Other Node.js 22 checks.** A reinstall does not fix adapter code that uses APIs removed in Node.js 22, such as `crypto.createCipher` and `crypto.createDecipher` (use `createCipheriv` and `createDecipheriv`), or `server.maxConnections = 0`, which Node.js 22 treats literally and rejects every connection. See the [Node.js 22 breaking changes](https://docs.itential.com/itential-platform/release-notes/breaking-changes/node-22-runtime-upgrade) and test the adapters on Node.js 22 in a development environment first.
+
 ### Environment Variables (for example an HTTP proxy)
 
 `initAdapterInstaller.env` is a map of environment variable names to values that is set on the installer init container. Use it when git or npm must go through an HTTP proxy:
@@ -263,8 +289,8 @@ initAdapterInstaller:
 
 1. **Pod-0 Only Execution**: Only runs on the first replica to avoid redundant installations
 2. **Cleanup Phase**: Removes adapters not in the current repositories list
-3. **Version Detection**: Checks if existing adapters need updates using git commit comparison
-4. **Installation Phase**: Clones and installs new/updated adapters
+3. **Version Detection**: Checks if existing adapters need updates using git commit comparison, and whether they were installed with the Node.js major version of the init container
+4. **Installation Phase**: Clones and installs new/updated adapters, and records the Node.js major version in each adapter
 5. **Permission Setting**: Sets proper file ownership and permissions (775, itential:users)
 6. **Reporting**: Generates comprehensive installation report
 
@@ -290,10 +316,12 @@ After installation, adapters are located at:
 /opt/itential/platform/services/custom/
 ├── adapter-six_connect/
 │   ├── node_modules/
+│   ├── .installer-node-major      (Node.js major version used for npm install, for example 22)
 │   ├── package.json
 │   └── ... (adapter files)
 ├── adapter-aruba_central/
 │   ├── node_modules/
+│   ├── .installer-node-major
 │   ├── package.json
 │   └── ... (adapter files)
 └── lost+found/
@@ -415,7 +443,15 @@ initAdapterInstaller:
 - Verify network access to npm registry
 - Review specific NPM error messages in logs
 
-#### 5. Pod Not Restarting After Repository Changes
+#### 5. Adapters Reinstalled After an Upgrade
+**Symptom**: Every adapter is reinstalled on the first start after a chart or image change, with `was installed with Node.js unknown` or `was installed with Node.js 20, this init container runs Node.js 22, will reinstall`
+**Cause**: The adapters have no `.installer-node-major` file (installed by an older chart version) or were installed with another Node.js major version. This is expected once.
+**Solution**:
+- No action is needed. The next start skips them, because the marker now matches
+- If it happens on every start, check that the volume is writable by the init container user and that `initAdapterInstaller.image.tag` does not change between releases
+- If the Platform fails to load an adapter after the reinstall, check the adapter code for APIs removed in Node.js 22 (see [Node.js Version and Native Add-ons](#nodejs-version-and-native-add-ons))
+
+#### 6. Pod Not Restarting After Repository Changes
 **Symptom**: Repository changes don't trigger adapter updates
 **Cause**: Checksum annotation not working or pod not restarting
 **Solution**:
@@ -456,7 +492,7 @@ kubectl exec <pod-name> -n <namespace> -- ls -la /opt/itential/platform/services
 ### Security
 - Run initContainer as non-root user
 - Use least-privilege security contexts
-- Regularly update base images (node:18-bullseye)
+- Regularly update base images (node:22-bullseye)
 
 ### Monitoring
 - Monitor initContainer logs for failures
@@ -502,6 +538,8 @@ When upgrading the Helm chart:
 2. Only changed adapters are reinstalled
 3. ConfigMap changes trigger automatic pod restarts
 
+**Upgrading to chart 1.13.0 (Node.js 22).** The default init container image changed from `node:18-bullseye` to `node:22-bullseye`, and the installer now records the Node.js major version of each adapter. Adapters installed by an earlier chart version have no record, so **every adapter is reinstalled once** (cloned again and `npm install` run) on the first start after the upgrade, even if its branch or tag did not change. Plan for a longer first start of the pod, and make sure the git server and npm registry are reachable. After that, adapters are skipped again until the Node.js major version changes. To keep the previous Node.js version for a Platform release that still runs it, set `initAdapterInstaller.image.tag` explicitly (for example `20-bullseye`).
+
 ## Support
 
 For issues related to the adapter installer:
@@ -521,7 +559,7 @@ initAdapterInstaller:
   enabled: true
   image:
     repository: node
-    tag: "18-bullseye"
+    tag: "22-bullseye"
     pullPolicy: IfNotPresent
   securityContext:
     runAsUser: 1001
