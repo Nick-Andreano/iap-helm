@@ -4,7 +4,7 @@
 
 This is the Helm chart for the **Itential Automation Platform (IAP)** — a network automation platform deployed as a Kubernetes StatefulSet. The chart lives in `charts/iap/` and is versioned separately from the repo.
 
-- **Chart version**: 1.11.0
+- **Chart version**: 1.12.0
 - **App version**: 6.0.7 (IAP release)
 - **Helm requirement**: v3.15.0+
 - **Chart type**: application
