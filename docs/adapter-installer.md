@@ -41,7 +41,7 @@ initAdapterInstaller:
   enabled: true
   image:
     repository: node
-    tag: "22-bullseye"
+    tag: ""                  # Empty: 22-bullseye for Platform 6.6.0 and later, 18-bullseye below. Set to pin a version.
     pullPolicy: IfNotPresent
   securityContext:
     runAsUser: 1001
@@ -183,7 +183,7 @@ initAdapterInstaller:
   enabled: true
   image:
     repository: node
-    tag: "22-bullseye"
+    tag: ""                  # Empty: 22-bullseye for Platform 6.6.0 and later, 18-bullseye below. Set to pin a version.
     pullPolicy: IfNotPresent
   securityContext:
     runAsUser: 1001          # Must match podSecurityContext
@@ -238,7 +238,7 @@ npmInstallOptions:
 
 Compiled dependencies are tied to the Node.js version they were built with. Itential Platform 6.6.0 and later run on Node.js 22 (earlier releases ran on Node.js 20), and every sideloaded adapter runs on the Platform's Node.js, so adapters must be built with the same major version.
 
-- **The init container image sets the Node.js version.** `initAdapterInstaller.image.tag` defaults to `22-bullseye`. Keep it on the same Node.js major version as the Platform image. For a Platform release that still runs Node.js 20, set `tag: "20-bullseye"`.
+- **The init container image sets the Node.js version.** When `initAdapterInstaller.image.tag` is empty (the default), the chart selects it from the Platform image tag (`image.tag`): `22-bullseye` for Platform 6.6.0 and later, and for tags that are not a version (such as `latest`); `18-bullseye`, the previous default, for earlier releases. Set `initAdapterInstaller.image.tag` to pin a version, and keep it on the same Node.js major version as the Platform image. For a Platform release that runs Node.js 20, set `tag: "20-bullseye"`, which is the exact match.
 - **The installer records the major version.** After a successful `npm install` it writes the Node.js major version (for example `22`) to `.installer-node-major` in the adapter directory.
 - **A different major version triggers a reinstall.** On every start the installer compares that file to the Node.js version of the init container. If they differ, the adapter is removed, cloned again and reinstalled, even when the git commit has not changed. The log shows `adapter-x was installed with Node.js 20, this init container runs Node.js 22, will reinstall`. Patch and minor changes (22.11 to 22.12) do not trigger a reinstall.
 - **Adapters installed by an older chart version have no marker** and are reinstalled once on the first start after the upgrade. See [Upgrading Helm Chart](#upgrading-helm-chart).
@@ -363,6 +363,7 @@ Installing adapters...
 Current user: itential (1001)
 Pod hostname: iap-na-0
 Running adapter installation on pod-0...
+Init container Node.js version: v22.11.0
 
 Cleaning up obsolete adapters...
 ✅ Keeping existing adapter: adapter-aruba_central
@@ -391,6 +392,16 @@ Obsolete adapters removed: 1
 🗑️ Removed obsolete adapters:
   - adapter-old_adapter
 =========================================
+```
+
+When the Node.js major version of the init container changes, an installed adapter is reinstalled even though its commit is unchanged:
+
+```
+Init container Node.js version: v22.11.0
+Adapter adapter-six_connect already on correct branch/tag: v0.8.1 (commit: 260b1c6c)
+adapter-six_connect was installed with Node.js 20, this init container runs Node.js 22, will reinstall
+Removing existing adapter-six_connect directory...
+Cloning adapter-six_connect repository...
 ```
 
 ## Troubleshooting
@@ -492,7 +503,7 @@ kubectl exec <pod-name> -n <namespace> -- ls -la /opt/itential/platform/services
 ### Security
 - Run initContainer as non-root user
 - Use least-privilege security contexts
-- Regularly update base images (node:22-bullseye)
+- Regularly update the `node` base image, and pin `initAdapterInstaller.image.tag` to the Node.js major version of your Platform image
 
 ### Monitoring
 - Monitor initContainer logs for failures
@@ -538,7 +549,7 @@ When upgrading the Helm chart:
 2. Only changed adapters are reinstalled
 3. ConfigMap changes trigger automatic pod restarts
 
-**Upgrading to chart 1.13.0 (Node.js 22).** The default init container image changed from `node:18-bullseye` to `node:22-bullseye`, and the installer now records the Node.js major version of each adapter. Adapters installed by an earlier chart version have no record, so **every adapter is reinstalled once** (cloned again and `npm install` run) on the first start after the upgrade, even if its branch or tag did not change. Plan for a longer first start of the pod, and make sure the git server and npm registry are reachable. After that, adapters are skipped again until the Node.js major version changes. To keep the previous Node.js version for a Platform release that still runs it, set `initAdapterInstaller.image.tag` explicitly (for example `20-bullseye`).
+**Upgrading to chart 1.13.0 (Node.js aware installer).** The installer now records the Node.js major version of each adapter, and the init container image follows the Platform version when `initAdapterInstaller.image.tag` is empty: `node:22-bullseye` for Platform 6.6.0 and later, `node:18-bullseye` (unchanged) for earlier releases. A Platform below 6.6.0 therefore keeps its init image, and nothing moves to Node.js 22 unless you set the tag. Adapters installed by an earlier chart version have no record, so **every adapter is reinstalled once** (cloned again and `npm install` run) on the first start after the upgrade, even if its branch or tag did not change. Plan for a longer first start of the pod, and make sure the git server and npm registry are reachable. After that, adapters are skipped again until the Node.js major version changes. When you upgrade the Platform image to 6.6.0 or later, the init image moves to Node.js 22 and the adapters are rebuilt once on the next start. To pin a version, set `initAdapterInstaller.image.tag` (for example `20-bullseye`).
 
 ## Support
 
@@ -559,7 +570,7 @@ initAdapterInstaller:
   enabled: true
   image:
     repository: node
-    tag: "22-bullseye"
+    tag: "22-bullseye"       # Pinned to the Node.js version of the Platform image (22 for 6.6.0 and later)
     pullPolicy: IfNotPresent
   securityContext:
     runAsUser: 1001

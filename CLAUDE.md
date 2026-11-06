@@ -190,7 +190,7 @@ These Kubernetes secrets must exist before install:
 
 Controlled by `initAdapterInstaller.enabled: true` + `mountAdapterVolume: true`.
 
-- Runs a Node.js 22 init container (`node:22-bullseye` by default) before IAP starts
+- Runs a Node.js init container before IAP starts (`node:22-bullseye` for Platform 6.6.0 and later, `node:18-bullseye` below, unless `initAdapterInstaller.image.tag` is set)
 - Executes a bash script (`configmap-adapter-installer.yaml`) that:
   - Clones git repos (GitLab, GitHub, Bitbucket) into the adapters volume
   - Detects branch/tag changes and Node.js major version changes (`.installer-node-major` marker in each adapter) and reinstalls only when needed

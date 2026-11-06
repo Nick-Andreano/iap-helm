@@ -111,3 +111,24 @@ Rendered as a YAML list of quoted strings, suitable for use with nindent.
 {{- end }}
 {{- end }}
 {{- end }}
+
+{{/*
+Tag of the adapter installer init container image. An explicit initAdapterInstaller.image.tag wins.
+Otherwise the Node.js version follows the Platform image tag: 22 for Platform 6.6.0 and later (and for
+tags that are not a version, such as latest), 18 (the previous default) for earlier releases.
+*/}}
+{{- define "iap.adapterInstallerImageTag" -}}
+{{- if .Values.initAdapterInstaller.image.tag -}}
+{{- .Values.initAdapterInstaller.image.tag -}}
+{{- else -}}
+{{- $version := regexFind "^v?[0-9]+\\.[0-9]+(\\.[0-9]+)?" (.Values.image.tag | toString) -}}
+{{- if and $version (not (regexMatch "^v?[0-9]+\\.[0-9]+\\.[0-9]+" $version)) -}}
+{{- $version = printf "%s.0" $version -}}
+{{- end -}}
+{{- if and $version (semverCompare "<6.6.0" $version) -}}
+18-bullseye
+{{- else -}}
+22-bullseye
+{{- end -}}
+{{- end -}}
+{{- end }}

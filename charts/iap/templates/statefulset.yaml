@@ -51,7 +51,7 @@ spec:
       {{- if and .Values.initAdapterInstaller.enabled .Values.mountAdapterVolume }}
       initContainers:
       - name: adapter-installer
-        image: "{{ .Values.initAdapterInstaller.image.repository }}:{{ .Values.initAdapterInstaller.image.tag }}"
+        image: "{{ .Values.initAdapterInstaller.image.repository }}:{{ include "iap.adapterInstallerImageTag" . }}"
         imagePullPolicy: {{ .Values.initAdapterInstaller.image.pullPolicy }}
         command: ["/bin/bash"]
         args:

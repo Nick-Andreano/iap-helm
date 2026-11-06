@@ -877,16 +877,137 @@ tests:
           path: spec.template.spec.initContainers[0].securityContext.allowPrivilegeEscalation
           value: false
 
-  - it: should default the adapter installer image to Node.js 22
+  - it: should select the adapter installer image 22-bullseye for Platform 6.6.1
     set:
       statefulset.enabled: true
       mountAdapterVolume: true
+      image:
+        tag: "6.6.1"
       initAdapterInstaller:
         enabled: true
     asserts:
       - equal:
           path: spec.template.spec.initContainers[0].image
           value: "node:22-bullseye"
+
+  - it: should select the adapter installer image 22-bullseye for Platform 6.6.0
+    set:
+      statefulset.enabled: true
+      mountAdapterVolume: true
+      image:
+        tag: "6.6.0"
+      initAdapterInstaller:
+        enabled: true
+    asserts:
+      - equal:
+          path: spec.template.spec.initContainers[0].image
+          value: "node:22-bullseye"
+
+  - it: should select the adapter installer image 22-bullseye for a v-prefixed Platform tag
+    set:
+      statefulset.enabled: true
+      mountAdapterVolume: true
+      image:
+        tag: "v6.7.0"
+      initAdapterInstaller:
+        enabled: true
+    asserts:
+      - equal:
+          path: spec.template.spec.initContainers[0].image
+          value: "node:22-bullseye"
+
+  - it: should select the adapter installer image 22-bullseye for a Platform tag with a suffix
+    set:
+      statefulset.enabled: true
+      mountAdapterVolume: true
+      image:
+        tag: "6.6.1-ecm-6.6.1-gm-1.18.2-1"
+      initAdapterInstaller:
+        enabled: true
+    asserts:
+      - equal:
+          path: spec.template.spec.initContainers[0].image
+          value: "node:22-bullseye"
+
+  - it: should select the adapter installer image 22-bullseye for a tag that is not a version
+    set:
+      statefulset.enabled: true
+      mountAdapterVolume: true
+      image:
+        tag: "latest"
+      initAdapterInstaller:
+        enabled: true
+    asserts:
+      - equal:
+          path: spec.template.spec.initContainers[0].image
+          value: "node:22-bullseye"
+
+  - it: should select the adapter installer image 18-bullseye for Platform 6.5.9
+    set:
+      statefulset.enabled: true
+      mountAdapterVolume: true
+      image:
+        tag: "6.5.9"
+      initAdapterInstaller:
+        enabled: true
+    asserts:
+      - equal:
+          path: spec.template.spec.initContainers[0].image
+          value: "node:18-bullseye"
+
+  - it: should select the adapter installer image 18-bullseye for Platform 6.0.7
+    set:
+      statefulset.enabled: true
+      mountAdapterVolume: true
+      image:
+        tag: "6.0.7"
+      initAdapterInstaller:
+        enabled: true
+    asserts:
+      - equal:
+          path: spec.template.spec.initContainers[0].image
+          value: "node:18-bullseye"
+
+  - it: should select the adapter installer image 22-bullseye for a major.minor Platform tag at 6.6
+    set:
+      statefulset.enabled: true
+      mountAdapterVolume: true
+      image:
+        tag: "6.6"
+      initAdapterInstaller:
+        enabled: true
+    asserts:
+      - equal:
+          path: spec.template.spec.initContainers[0].image
+          value: "node:22-bullseye"
+
+  - it: should select the adapter installer image 18-bullseye for a major.minor Platform tag below 6.6
+    set:
+      statefulset.enabled: true
+      mountAdapterVolume: true
+      image:
+        tag: "6.5"
+      initAdapterInstaller:
+        enabled: true
+    asserts:
+      - equal:
+          path: spec.template.spec.initContainers[0].image
+          value: "node:18-bullseye"
+
+  - it: should use an explicit adapter installer image tag over the Platform version
+    set:
+      statefulset.enabled: true
+      mountAdapterVolume: true
+      image:
+        tag: "6.0.7"
+      initAdapterInstaller:
+        enabled: true
+        image:
+          tag: "20-bullseye"
+    asserts:
+      - equal:
+          path: spec.template.spec.initContainers[0].image
+          value: "node:20-bullseye"
 
   - it: should mount configmap and volumes correctly in initContainer
     set:
